@@ -45,6 +45,9 @@ jobs:
       - name: 检查类型
         run: pnpm typecheck
 
+      - name: 检查 lint
+        run: pnpm lint
+
       - name: 运行单元测试
         run: pnpm test
 
@@ -142,3 +145,68 @@ jobs:
           test -z "$(find "$RUNNER_TEMP/max-promotion-backups" -maxdepth 1 -type f -name '.*.partial.*' -print -quit)"
           cd "$RUNNER_TEMP/max-promotion-backups"
           sha256sum -c ./*.dump.sha256
+
+  images:
+    name: 镜像构建与存活探针
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v7
+
+      - name: 校验 .dockerignore 覆盖关键目录
+        run: |
+          for pattern in 'node_modules' '**/dist' '.env'; do
+            grep -qF -- "$pattern" .dockerignore || { echo "缺少 $pattern 规则"; exit 1; }
+          done
+          echo ".dockerignore 关键规则齐全"
+
+      - name: 构建 API 镜像
+        run: |
+          docker build --progress=plain -f apps/api/Dockerfile -t max-promotion-api:ci . 2>&1 | tee /tmp/api-build.log
+          grep -oE 'transferring context: [0-9.]+[kMGT]?B' /tmp/api-build.log | tail -1 || true
+
+      - name: 构建 Web 镜像
+        run: docker build -f apps/web/Dockerfile -t max-promotion-web:ci .
+
+      - name: 启动临时 PostgreSQL 供 API 启动
+        run: |
+          docker network create smoke-net
+          docker run --rm -d --name smoke-db --network smoke-net \
+            -e POSTGRES_DB=max_promotion \
+            -e POSTGRES_USER=max_promotion \
+            -e POSTGRES_PASSWORD=smoke-only-password \
+            postgres:17-alpine
+          for attempt in {1..30}; do
+            if docker exec smoke-db pg_isready -U max_promotion -d max_promotion; then
+              exit 0
+            fi
+            sleep 2
+          done
+          exit 1
+
+      - name: 启动 API 容器并验证存活探针
+        run: |
+          docker run --rm -d --name smoke-api --network smoke-net \
+            -p 127.0.0.1:3100:3000 \
+            -e DATABASE_URL='postgresql://max_promotion:smoke-only-password@smoke-db:5432/max_promotion?schema=public' \
+            -e JWT_SECRET=ci-only-smoke-secret-at-least-32-characters \
+            -e WEB_ORIGIN=http://127.0.0.1:3100 \
+            max-promotion-api:ci
+          code=000
+          for attempt in {1..30}; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3100/api/health/live || true)
+            if [ "$code" = "200" ]; then
+              echo "存活探针返回 200"
+              break
+            fi
+            sleep 2
+          done
+          echo "最后一次探针状态码：$code"
+          docker logs smoke-api | tail -20
+          test "$code" = "200"
+
+      - name: 清理临时容器
+        if: always()
+        run: |
+          docker rm -f smoke-api smoke-db 2>/dev/null || true
+          docker network rm smoke-net 2>/dev/null || true
