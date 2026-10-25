@@ -78,9 +78,25 @@ export class AdminService {
 
   async merchants() {
     try {
+      // 用 select 限定字段：user 整条带出会包含 passwordHash 等凭据字段。
       return await this.prisma.merchantProfile.findMany({
-        include: {
-          user: { include: { wallet: true } },
+        select: {
+          id: true,
+          userId: true,
+          companyName: true,
+          contactName: true,
+          contactPhone: true,
+          note: true,
+          createdAt: true,
+          user: {
+            select: {
+              id: true,
+              username: true,
+              displayName: true,
+              status: true,
+              wallet: true,
+            },
+          },
           _count: { select: { tasks: true } },
         },
         // 同一创建时间下使用主键兜底，确保商户选择列表顺序稳定。
