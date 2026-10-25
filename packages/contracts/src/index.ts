@@ -26,6 +26,15 @@ export interface AuthSession {
   user: SessionUser;
 }
 
+export interface AuthSessionRecord {
+  id: string;
+  current: boolean;
+  userAgent: string;
+  ipAddress: string;
+  createdAt: string;
+  expiresAt: string;
+}
+
 export interface WalletView {
   availableCents: string;
   frozenCents: string;

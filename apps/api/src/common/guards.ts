@@ -37,8 +37,34 @@ export class JwtAuthGuard implements CanActivate {
     if (!header?.startsWith('Bearer ')) throw new UnauthorizedException('请先登录');
 
     try {
-      const payload = await this.jwt.verifyAsync<{ sub: string }>(header.slice(7));
-      const user = await this.prisma.user.findUnique({ where: { id: payload.sub } });
+      const payload = await this.jwt.verifyAsync<{ sub?: string; sessionId?: string }>(
+        header.slice(7),
+      );
+      if (!payload.sub || !payload.sessionId) {
+        throw new UnauthorizedException('登录会话信息不完整，请重新登录');
+      }
+
+      // 每次受保护请求都核对会话归属和状态，撤销后旧访问令牌会立即失效。
+      const session = await this.prisma.refreshSession.findFirst({
+        where: {
+          id: payload.sessionId,
+          userId: payload.sub,
+          revokedAt: null,
+          expiresAt: { gt: new Date() },
+        },
+        select: {
+          user: {
+            select: {
+              id: true,
+              username: true,
+              displayName: true,
+              role: true,
+              status: true,
+            },
+          },
+        },
+      });
+      const user = session?.user;
       if (!user || user.status !== 'ACTIVE' || user.role === 'MERCHANT') {
         throw new UnauthorizedException('账号不可用');
       }
@@ -47,6 +73,7 @@ export class JwtAuthGuard implements CanActivate {
         username: user.username,
         displayName: user.displayName,
         role: user.role,
+        sessionId: payload.sessionId,
       };
       return true;
     } catch (error) {

@@ -1,11 +1,11 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import argon2 from 'argon2';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { loadEnv } from '../config/env';
 import { AlertService } from '../operations/alert.service';
 import { PrismaService } from '../prisma/prisma.service';
-import type { SessionUser } from '@max-promotion/contracts';
+import type { AuthSessionRecord, SessionUser } from '@max-promotion/contracts';
 import { buildLoginAttemptSubjects, LoginThrottleService } from './login-throttle.service';
 
 export interface IssuedSession {
@@ -164,6 +164,72 @@ export class AuthService {
     });
   }
 
+  /**
+   * 只返回当前账号仍有效、尚未过期的会话。
+   * 查询结果不读取令牌哈希和 CSRF 哈希，避免敏感校验值离开服务端。
+   */
+  async listSessions(userId: string, currentSessionId: string): Promise<AuthSessionRecord[]> {
+    const sessions = await this.prisma.refreshSession.findMany({
+      where: {
+        userId,
+        revokedAt: null,
+        expiresAt: { gt: new Date() },
+      },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        userAgent: true,
+        ipAddress: true,
+        createdAt: true,
+        expiresAt: true,
+      },
+    });
+
+    return sessions.map((session) => ({
+      id: session.id,
+      current: session.id === currentSessionId,
+      userAgent: session.userAgent,
+      ipAddress: session.ipAddress,
+      createdAt: session.createdAt.toISOString(),
+      expiresAt: session.expiresAt.toISOString(),
+    }));
+  }
+
+  /**
+   * 使用带 userId 条件的原子更新撤销会话。
+   * 重复撤销按幂等成功处理，其他账号的会话统一返回不存在，防止跨账号探测。
+   */
+  async revokeSession(userId: string, sessionId: string): Promise<void> {
+    await this.prisma.$transaction(async (transaction) => {
+      const revoked = await transaction.refreshSession.updateMany({
+        where: {
+          id: sessionId,
+          userId,
+          revokedAt: null,
+        },
+        data: { revokedAt: new Date() },
+      });
+      if (revoked.count === 0) {
+        const existing = await transaction.refreshSession.findFirst({
+          where: { id: sessionId, userId },
+          select: { id: true },
+        });
+        if (!existing) throw new NotFoundException('会话不存在或无权操作');
+        return;
+      }
+
+      await transaction.auditLog.create({
+        data: {
+          actorId: userId,
+          action: 'SESSION_REVOKED',
+          entityType: 'REFRESH_SESSION',
+          entityId: sessionId,
+          detail: '用户撤销了自己的登录会话',
+        },
+      });
+    });
+  }
+
   private async issue(
     user: SessionUser,
     userAgent: string,
@@ -189,6 +255,7 @@ export class AuthService {
     const accessToken = await this.jwt.signAsync({
       sub: user.id,
       role: user.role,
+      sessionId: created.id,
     });
 
     return {

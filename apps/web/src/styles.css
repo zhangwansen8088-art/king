@@ -985,6 +985,117 @@ button:disabled {
   gap: 24px;
 }
 
+/* 会话安全 */
+
+.session-security {
+  align-content: start;
+}
+
+.session-list {
+  display: grid;
+  background: var(--paper);
+  border: 1px solid var(--line);
+}
+
+.session-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.2fr) minmax(280px, 1fr) auto;
+  align-items: center;
+  gap: 24px;
+  padding: 18px 20px;
+}
+
+.session-row + .session-row {
+  border-top: 1px solid var(--line);
+}
+
+.session-identity {
+  display: grid;
+  min-width: 0;
+  justify-items: start;
+  gap: 4px;
+}
+
+.session-identity strong,
+.session-identity > span:last-child {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-identity strong {
+  font-size: 14px;
+}
+
+.session-identity > span:last-child {
+  color: var(--ink-faint);
+  font-size: 11px;
+}
+
+.session-badge {
+  display: inline-flex;
+  padding: 1px 7px;
+  color: var(--ink-soft);
+  background: var(--mist);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.session-badge.current {
+  color: var(--work-dark);
+  background: var(--work-pale);
+  border-color: rgba(44, 117, 108, 0.23);
+}
+
+.session-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin: 0;
+}
+
+.session-meta div {
+  display: grid;
+  gap: 2px;
+}
+
+.session-meta dt {
+  color: var(--ink-faint);
+  font-size: 10px;
+}
+
+.session-meta dd {
+  margin: 0;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.session-note {
+  color: var(--ink-faint);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.danger-text-button {
+  padding: 5px 0;
+  color: var(--signal);
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid rgba(228, 93, 66, 0.35);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.danger-text-button:hover:not(:disabled) {
+  color: #a23f2d;
+  border-bottom-color: currentColor;
+}
+
 /* Admin overview */
 
 .overview-grid {
@@ -2636,6 +2747,11 @@ button:disabled {
     grid-template-columns: 1fr;
   }
 
+  .session-row {
+    grid-template-columns: minmax(200px, 1fr) minmax(250px, 1fr) auto;
+    gap: 18px;
+  }
+
   .ledger-entry {
     grid-template-columns: 24px minmax(0, 1fr) 90px 100px;
   }
@@ -2733,7 +2849,7 @@ button:disabled {
     left: 0;
     z-index: 40;
     display: grid;
-    grid-template-columns: repeat(6, 1fr);
+    grid-template-columns: repeat(7, minmax(0, 1fr));
     padding: 7px 6px max(7px, env(safe-area-inset-bottom));
     color: var(--paper);
     background: rgba(22, 52, 59, 0.97);
@@ -2762,7 +2878,7 @@ button:disabled {
   }
 
   .promoter-mobile-nav {
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(4, 1fr);
   }
 
   .section-heading {
@@ -2775,6 +2891,24 @@ button:disabled {
 
   .section-heading > .primary-button {
     flex: 0 0 auto;
+  }
+
+  .session-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 13px;
+    padding: 16px;
+  }
+
+  .session-meta {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  .session-note,
+  .danger-text-button {
+    grid-column: 2;
+    grid-row: 1;
+    justify-self: end;
   }
 
   .overview-grid {

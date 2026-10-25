@@ -1,12 +1,24 @@
-import { BadRequestException, HttpException, HttpStatus } from '@nestjs/common';
-import { randomUUID } from 'node:crypto';
+import {
+  BadRequestException,
+  HttpException,
+  HttpStatus,
+  UnauthorizedException,
+  type ExecutionContext,
+} from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
+import type { Reflector } from '@nestjs/core';
+import { createHash, randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AdminService } from '../../src/admin/admin.service';
+import { AuthService } from '../../src/auth/auth.service';
 import {
   buildLoginAttemptSubjects,
   LoginThrottleService,
 } from '../../src/auth/login-throttle.service';
 import { FundsService } from '../../src/business/funds.service';
+import type { AuthUser } from '../../src/common/auth.types';
+import { JwtAuthGuard } from '../../src/common/guards';
+import type { AlertService } from '../../src/operations/alert.service';
 import { cleanupExpiredAuditLogs } from '../../src/operations/audit-retention';
 import { PrismaService } from '../../src/prisma/prisma.service';
 import { PromoterService } from '../../src/promoter/promoter.service';
@@ -41,6 +53,9 @@ let prisma: PrismaService;
 let admin: AdminService;
 let promoter: PromoterService;
 let funds: FundsService;
+let auth: AuthService;
+let jwt: JwtService;
+let jwtGuard: JwtAuthGuard;
 
 async function truncateTestDatabase(): Promise<void> {
   await prisma.$executeRawUnsafe(
@@ -66,6 +81,61 @@ async function createUser(input: {
       wallet: { create: { availableCents: input.availableCents ?? 0n } },
     },
   });
+}
+
+async function createRefreshSession(
+  userId: string,
+  userAgent: string,
+  ipAddress: string,
+): Promise<{
+  sessionId: string;
+  refreshToken: string;
+  csrfToken: string;
+  accessToken: string;
+}> {
+  const refreshToken = randomUUID();
+  const csrfToken = randomUUID();
+  const session = await prisma.refreshSession.create({
+    data: {
+      userId,
+      tokenHash: createHash('sha256').update(refreshToken).digest('hex'),
+      csrfHash: createHash('sha256').update(csrfToken).digest('hex'),
+      expiresAt: new Date(fixedNow.getTime() + 7 * 24 * 60 * 60 * 1_000),
+      userAgent,
+      ipAddress,
+    },
+  });
+  const accessToken = await jwt.signAsync({
+    sub: userId,
+    role: 'PROMOTER',
+    sessionId: session.id,
+  });
+  return { sessionId: session.id, refreshToken, csrfToken, accessToken };
+}
+
+function authenticatedRequest(accessToken: string): {
+  headers: { authorization?: string };
+  user?: AuthUser;
+} {
+  return { headers: { authorization: `Bearer ${accessToken}` } };
+}
+
+function guardContext(request: ReturnType<typeof authenticatedRequest>): ExecutionContext {
+  return {
+    getHandler: () => function handler() {},
+    getClass: () => class Controller {},
+    switchToHttp: () => ({ getRequest: () => request }),
+  } as unknown as ExecutionContext;
+}
+
+async function sessionTokenIsAccepted(accessToken: string): Promise<boolean> {
+  try {
+    await jwtGuard.canActivate(guardContext(authenticatedRequest(accessToken)));
+    return true;
+  } catch (error) {
+    if (error instanceof UnauthorizedException) return false;
+    throw error;
+  }
 }
 
 async function seedBusinessActors() {
@@ -179,6 +249,15 @@ describe('PostgreSQL 资金与任务业务闭环', () => {
     funds = new FundsService(prisma);
     admin = new AdminService(prisma, funds);
     promoter = new PromoterService(prisma, funds);
+    jwt = new JwtService({ secret: loginSecurityEnv.JWT_SECRET });
+    auth = new AuthService(prisma, jwt, new LoginThrottleService(prisma), {
+      notifyLoginLockout: vi.fn(),
+    } as unknown as AlertService);
+    jwtGuard = new JwtAuthGuard(
+      jwt,
+      { getAllAndOverride: vi.fn(() => false) } as unknown as Reflector,
+      prisma,
+    );
   });
 
   beforeEach(async () => {
@@ -1115,5 +1194,82 @@ describe('PostgreSQL 资金与任务业务闭环', () => {
         },
       }),
     ).toBeNull();
+  });
+
+  it('账号只能查看和撤销自己的会话，撤销后旧凭据立即失效且不影响其他会话', async () => {
+    const accountA = await createUser({
+      username: 'session-account-a',
+      displayName: '会话测试账号甲',
+      role: 'PROMOTER',
+    });
+    const accountB = await createUser({
+      username: 'session-account-b',
+      displayName: '会话测试账号乙',
+      role: 'PROMOTER',
+    });
+    const [aCurrent, aTarget, bSession] = await Promise.all([
+      createRefreshSession(accountA.id, '账号甲当前设备', '203.0.113.201'),
+      createRefreshSession(accountA.id, '账号甲待撤销设备', '203.0.113.202'),
+      createRefreshSession(accountB.id, '账号乙设备', '203.0.113.203'),
+    ]);
+
+    const sessions = await auth.listSessions(accountA.id, aCurrent.sessionId);
+    expect(new Set(sessions.map(({ id }) => id))).toEqual(
+      new Set([aCurrent.sessionId, aTarget.sessionId]),
+    );
+    expect(sessions.find(({ id }) => id === aCurrent.sessionId)?.current).toBe(true);
+    expect(sessions.find(({ id }) => id === aTarget.sessionId)?.current).toBe(false);
+    expect(JSON.stringify(sessions)).not.toMatch(/tokenHash|csrfHash|refreshToken|csrfToken/);
+
+    await expect(auth.revokeSession(accountA.id, bSession.sessionId)).rejects.toMatchObject({
+      message: '会话不存在或无权操作',
+    });
+    await expect(sessionTokenIsAccepted(bSession.accessToken)).resolves.toBe(true);
+
+    await auth.revokeSession(accountA.id, aTarget.sessionId);
+    await expect(sessionTokenIsAccepted(aTarget.accessToken)).resolves.toBe(false);
+    await expect(sessionTokenIsAccepted(aCurrent.accessToken)).resolves.toBe(true);
+    await expect(sessionTokenIsAccepted(bSession.accessToken)).resolves.toBe(true);
+    await expect(
+      auth.refresh(aTarget.refreshToken, aTarget.csrfToken, '撤销后的刷新测试', '203.0.113.202'),
+    ).rejects.toBeInstanceOf(UnauthorizedException);
+
+    expect(
+      await prisma.auditLog.count({
+        where: { action: 'SESSION_REVOKED', entityId: aTarget.sessionId },
+      }),
+    ).toBe(1);
+    expect(
+      await prisma.auditLog.count({
+        where: { action: 'SESSION_REVOKED', entityId: bSession.sessionId },
+      }),
+    ).toBe(0);
+  });
+
+  it('并发撤销同一会话保持幂等，不重复写审计也不误伤其他会话', async () => {
+    const account = await createUser({
+      username: 'session-concurrent-account',
+      displayName: '并发撤销测试账号',
+      role: 'PROMOTER',
+    });
+    const [kept, target] = await Promise.all([
+      createRefreshSession(account.id, '保留设备', '203.0.113.211'),
+      createRefreshSession(account.id, '并发撤销设备', '203.0.113.212'),
+    ]);
+
+    await expect(
+      Promise.all([
+        auth.revokeSession(account.id, target.sessionId),
+        auth.revokeSession(account.id, target.sessionId),
+      ]),
+    ).resolves.toEqual([undefined, undefined]);
+
+    await expect(sessionTokenIsAccepted(target.accessToken)).resolves.toBe(false);
+    await expect(sessionTokenIsAccepted(kept.accessToken)).resolves.toBe(true);
+    expect(
+      await prisma.auditLog.count({
+        where: { action: 'SESSION_REVOKED', entityId: target.sessionId },
+      }),
+    ).toBe(1);
   });
 });

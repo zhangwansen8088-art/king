@@ -5,4 +5,5 @@ export interface AuthUser {
   username: string;
   displayName: string;
   role: UserRole;
+  sessionId: string;
 }

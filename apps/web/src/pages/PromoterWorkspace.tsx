@@ -14,6 +14,7 @@ import {
   yuanToCents,
   type Notice,
 } from '../components/ui';
+import { SessionSecurityModal } from '../components/SessionSecurity';
 import { useEffect } from 'react';
 
 interface PromoterWorkspaceProps {
@@ -39,6 +40,7 @@ export function PromoterWorkspace({ user, onLogout }: PromoterWorkspaceProps) {
   const [submittingProof, setSubmittingProof] = useState(false);
   const [notice, setNotice] = useState<Notice>(null);
   const [withdrawOpen, setWithdrawOpen] = useState(false);
+  const [sessionSecurityOpen, setSessionSecurityOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const [activePanel, setActivePanel] = useState<'dispatch' | 'ledger' | 'withdraw'>('dispatch');
 
@@ -145,6 +147,10 @@ export function PromoterWorkspace({ user, onLogout }: PromoterWorkspaceProps) {
           >
             <span aria-hidden="true">提</span>
             申请提现
+          </button>
+          <button type="button" onClick={() => setSessionSecurityOpen(true)}>
+            <span aria-hidden="true">安</span>
+            会话安全
           </button>
         </nav>
 
@@ -386,7 +392,16 @@ export function PromoterWorkspace({ user, onLogout }: PromoterWorkspaceProps) {
         <button type="button" onClick={() => scrollToPanel('withdraw')}>
           <span aria-hidden="true">提</span>提现
         </button>
+        <button type="button" onClick={() => setSessionSecurityOpen(true)}>
+          <span aria-hidden="true">安</span>安全
+        </button>
       </nav>
+
+      <SessionSecurityModal
+        open={sessionSecurityOpen}
+        onClose={() => setSessionSecurityOpen(false)}
+        onNotice={setNotice}
+      />
 
       <WithdrawModal
         open={withdrawOpen}
