@@ -33,8 +33,10 @@ import {
   yuanToCents,
   type Notice,
 } from '../components/ui';
+import { SessionSecurityPanel } from '../components/SessionSecurity';
 
-type AdminSection = 'overview' | 'merchants' | 'tasks' | 'reviews' | 'withdrawals' | 'audit';
+type AdminSection =
+  'overview' | 'merchants' | 'tasks' | 'reviews' | 'withdrawals' | 'audit' | 'security';
 
 interface AdminWorkspaceProps {
   user: SessionUser;
@@ -48,6 +50,7 @@ const navItems: Array<{ id: AdminSection; label: string; index: string }> = [
   { id: 'reviews', label: '凭证审核', index: '审' },
   { id: 'withdrawals', label: '提现处理', index: '提' },
   { id: 'audit', label: '审计日志', index: '记' },
+  { id: 'security', label: '会话安全', index: '安' },
 ];
 
 function signedYuanToCents(value: string): string | null {
@@ -94,6 +97,10 @@ export function AdminWorkspace({ user, onLogout }: AdminWorkspaceProps) {
     async (quiet = false) => {
       if (!quiet) setLoading(true);
       try {
+        if (section === 'security') {
+          // 会话列表由安全面板独立加载，这里不请求与本分区无关的管理总览。
+          return;
+        }
         if (section === 'overview') {
           setDashboard(await api.get<AdminDashboard>('/admin/dashboard'));
         } else if (section === 'merchants') {
@@ -275,6 +282,8 @@ export function AdminWorkspace({ user, onLogout }: AdminWorkspaceProps) {
               onError={showError}
               onReview={setWithdrawalTarget}
             />
+          ) : section === 'security' ? (
+            <SessionSecurityPanel onNotice={setNotice} />
           ) : (
             <AuditSection onError={showError} />
           )}

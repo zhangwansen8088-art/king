@@ -1,8 +1,19 @@
-import { Body, Controller, ForbiddenException, Post, Req, Res } from '@nestjs/common';
-import { ApiTags } from '@nestjs/swagger';
+import {
+  Body,
+  Controller,
+  ForbiddenException,
+  Get,
+  Param,
+  ParseUUIDPipe,
+  Post,
+  Req,
+  Res,
+} from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import type { Request, Response } from 'express';
-import type { AuthSession, SessionUser } from '@max-promotion/contracts';
-import { Public } from '../common/decorators';
+import type { AuthSession, AuthSessionRecord, SessionUser } from '@max-promotion/contracts';
+import type { AuthUser } from '../common/auth.types';
+import { CurrentUser, Public } from '../common/decorators';
 import { loadEnv } from '../config/env';
 import { AuthService } from './auth.service';
 import { LoginDto } from './auth.dto';
@@ -79,6 +90,24 @@ export class AuthController {
       this.csrfFromRequest(request),
     );
     this.clearCookies(response);
+    return { success: true };
+  }
+
+  @ApiBearerAuth()
+  @Get('sessions')
+  sessions(@CurrentUser() user: AuthUser): Promise<AuthSessionRecord[]> {
+    return this.auth.listSessions(user.id, user.sessionId);
+  }
+
+  @ApiBearerAuth()
+  @Post('sessions/:id/revoke')
+  async revokeSession(
+    @CurrentUser() user: AuthUser,
+    @Param('id', new ParseUUIDPipe()) sessionId: string,
+    @Req() request: Request,
+  ): Promise<{ success: true }> {
+    this.assertOrigin(request);
+    await this.auth.revokeSession(user.id, sessionId);
     return { success: true };
   }
 

@@ -1,4 +1,5 @@
 import type {
+  AuthSessionRecord,
   AuthSession,
   LedgerView,
   SessionUser,
@@ -8,6 +9,7 @@ import type {
 } from '@max-promotion/contracts';
 
 export type {
+  AuthSessionRecord,
   AuthSession,
   LedgerView,
   SessionUser,
