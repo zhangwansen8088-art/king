@@ -1,0 +1,519 @@
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import argon2 from 'argon2';
+import { randomBytes, randomUUID } from 'node:crypto';
+import { FundsService } from '../business/funds.service';
+import { priceTask } from '../business/business-rules';
+import { PrismaService } from '../prisma/prisma.service';
+import type {
+  AdjustWalletDto,
+  CreateMerchantDto,
+  CreateTaskDto,
+  ReviewSubmissionDto,
+  ReviewWithdrawalDto,
+  UpdateMerchantDto,
+} from './admin.dto';
+
+@Injectable()
+export class AdminService {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly funds: FundsService,
+  ) {}
+
+  async dashboard() {
+    const [
+      merchants,
+      openTasks,
+      pendingSubmissions,
+      pendingWithdrawals,
+      availableAggregate,
+      frozenAggregate,
+      auditLogs,
+    ] = await Promise.all([
+      this.prisma.merchantProfile.count(),
+      this.prisma.task.count({ where: { status: 'OPEN' } }),
+      this.prisma.submission.count({ where: { status: 'SUBMITTED' } }),
+      this.prisma.withdrawal.count({ where: { status: 'PENDING' } }),
+      this.prisma.wallet.aggregate({ _sum: { availableCents: true } }),
+      this.prisma.wallet.aggregate({ _sum: { frozenCents: true } }),
+      this.prisma.auditLog.findMany({
+        include: { actor: { select: { displayName: true } } },
+        orderBy: { createdAt: 'desc' },
+        take: 8,
+      }),
+    ]);
+    return {
+      merchants,
+      openTasks,
+      pendingSubmissions,
+      pendingWithdrawals,
+      totalAvailableCents: availableAggregate._sum.availableCents ?? 0n,
+      totalFrozenCents: frozenAggregate._sum.frozenCents ?? 0n,
+      auditLogs,
+    };
+  }
+
+  async merchants() {
+    return this.prisma.merchantProfile.findMany({
+      include: {
+        user: { include: { wallet: true } },
+        tasks: {
+          select: {
+            id: true,
+            status: true,
+            budgetReservedCents: true,
+            budgetSpentCents: true,
+            budgetRefundedCents: true,
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async createMerchant(adminId: string, body: CreateMerchantDto) {
+    const passwordHash = await argon2.hash(randomBytes(32).toString('base64url'));
+    return this.prisma.$transaction(async (tx) => {
+      const user = await tx.user.create({
+        data: {
+          username: `merchant-${randomUUID()}`,
+          passwordHash,
+          displayName: body.displayName.trim(),
+          role: 'MERCHANT',
+          wallet: { create: {} },
+          merchantProfile: {
+            create: {
+              companyName: body.companyName.trim(),
+              contactName: body.contactName.trim(),
+              contactPhone: body.contactPhone?.trim() ?? '',
+              note: body.note?.trim() ?? '',
+            },
+          },
+        },
+        include: { wallet: true, merchantProfile: true },
+      });
+      await this.funds.audit(
+        tx,
+        adminId,
+        'MERCHANT_CREATE',
+        'MERCHANT',
+        user.merchantProfile!.id,
+        `创建商户资料“${body.companyName.trim()}”。商户没有独立登录入口。`,
+      );
+      return user;
+    });
+  }
+
+  async updateMerchant(adminId: string, id: string, body: UpdateMerchantDto) {
+    return this.prisma.$transaction(async (tx) => {
+      const profile = await tx.merchantProfile.findUnique({ where: { id } });
+      if (!profile) throw new NotFoundException('商户资料不存在');
+      const updated = await tx.merchantProfile.update({
+        where: { id },
+        data: {
+          ...(body.companyName !== undefined ? { companyName: body.companyName.trim() } : {}),
+          ...(body.contactName !== undefined ? { contactName: body.contactName.trim() } : {}),
+          ...(body.contactPhone !== undefined ? { contactPhone: body.contactPhone.trim() } : {}),
+          ...(body.note !== undefined ? { note: body.note.trim() } : {}),
+        },
+      });
+      if (body.displayName !== undefined || body.status !== undefined) {
+        await tx.user.update({
+          where: { id: profile.userId },
+          data: {
+            ...(body.displayName !== undefined ? { displayName: body.displayName.trim() } : {}),
+            ...(body.status !== undefined ? { status: body.status } : {}),
+          },
+        });
+      }
+      await this.funds.audit(tx, adminId, 'MERCHANT_UPDATE', 'MERCHANT', id, '更新商户资料', {
+        ...body,
+      });
+      return updated;
+    });
+  }
+
+  async tasks() {
+    return this.prisma.task.findMany({
+      include: {
+        merchant: { include: { user: { select: { displayName: true } } } },
+        _count: { select: { submissions: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 200,
+    });
+  }
+
+  async createTask(adminId: string, body: CreateTaskDto) {
+    const startsAt = new Date(body.startsAt);
+    const endsAt = new Date(body.endsAt);
+    if (endsAt <= startsAt) throw new BadRequestException('任务结束时间必须晚于开始时间');
+    if (body.rewardType === 'WELFARE' && !body.welfareClaimRule?.trim()) {
+      throw new BadRequestException('福利任务必须填写领取对象、方式和数量');
+    }
+
+    const pricing = priceTask(BigInt(body.adFeeCents), body.rewardType, body.maxClaims);
+    return this.prisma.serializable(async (tx) => {
+      const duplicate = await tx.task.findUnique({
+        where: { clientRequestId: body.requestId },
+        include: { merchant: true },
+      });
+      if (duplicate) return duplicate;
+
+      const merchant = await tx.merchantProfile.findUnique({
+        where: { id: body.merchantId },
+        include: { user: { include: { wallet: true } } },
+      });
+      if (!merchant || merchant.user.status !== 'ACTIVE') {
+        throw new NotFoundException('商户资料不存在或已停用');
+      }
+      if (
+        !merchant.user.wallet ||
+        merchant.user.wallet.availableCents < pricing.maximumBudgetCents
+      ) {
+        throw new BadRequestException('商户可用广告余额不足');
+      }
+
+      const task = await tx.task.create({
+        data: {
+          clientRequestId: body.requestId,
+          merchantId: merchant.id,
+          title: body.title.trim(),
+          description: body.description?.trim() ?? '',
+          adContent: body.adContent.trim(),
+          publicPoints: body.publicPoints.trim(),
+          region: body.region.trim(),
+          adFeeCents: BigInt(body.adFeeCents),
+          rewardType: body.rewardType,
+          welfareClaimRule: body.rewardType === 'WELFARE' ? body.welfareClaimRule!.trim() : '',
+          commissionCents: pricing.commissionCents,
+          referralCents: pricing.referralCents,
+          maxClaims: body.maxClaims,
+          budgetReservedCents: pricing.maximumBudgetCents,
+          startsAt,
+          endsAt,
+          createdByAdminId: adminId,
+        },
+      });
+      await this.funds.change(tx, {
+        userId: merchant.userId,
+        availableDelta: -pricing.maximumBudgetCents,
+        frozenDelta: pricing.maximumBudgetCents,
+        type: 'TASK_BUDGET_FREEZE',
+        referenceType: 'TASK',
+        referenceId: task.id,
+        idempotencyKey: `task:${task.id}:budget:freeze`,
+        memo: `发布“${task.title}”，预留最高广告预算`,
+        actorId: adminId,
+      });
+      await this.funds.audit(
+        tx,
+        adminId,
+        'TASK_CREATE',
+        'TASK',
+        task.id,
+        `为商户“${merchant.companyName}”发布任务“${task.title}”，冻结预算 ${pricing.maximumBudgetCents} 分`,
+      );
+      return task;
+    });
+  }
+
+  async updateTaskStatus(adminId: string, taskId: string, status: 'OPEN' | 'PAUSED' | 'ENDED') {
+    return this.prisma.serializable(async (tx) => {
+      const task = await tx.task.findUnique({
+        where: { id: taskId },
+        include: { merchant: true },
+      });
+      if (!task) throw new NotFoundException('推广任务不存在');
+      if (task.status === 'ENDED') throw new BadRequestException('任务已经结束');
+      if (status === 'ENDED') {
+        const unresolved = await tx.submission.count({
+          where: { taskId, status: { in: ['CLAIMED', 'SUBMITTED'] } },
+        });
+        if (unresolved > 0) {
+          throw new BadRequestException('仍有待提交或待审核记录，暂不能结束任务');
+        }
+        const remaining =
+          task.budgetReservedCents - task.budgetSpentCents - task.budgetRefundedCents;
+        if (remaining > 0n) {
+          await this.funds.change(tx, {
+            userId: task.merchant.userId,
+            availableDelta: remaining,
+            frozenDelta: -remaining,
+            type: 'TASK_BUDGET_REFUND',
+            referenceType: 'TASK',
+            referenceId: task.id,
+            idempotencyKey: `task:${task.id}:budget:refund`,
+            memo: `结束“${task.title}”，退回剩余广告预算`,
+            actorId: adminId,
+          });
+        }
+        await tx.task.update({
+          where: { id: taskId },
+          data: {
+            budgetRefundedCents: { increment: remaining > 0n ? remaining : 0n },
+            status,
+            version: { increment: 1 },
+          },
+        });
+      } else {
+        await tx.task.update({
+          where: { id: taskId },
+          data: { status, version: { increment: 1 } },
+        });
+      }
+      await this.funds.audit(
+        tx,
+        adminId,
+        'TASK_STATUS',
+        'TASK',
+        task.id,
+        `任务“${task.title}”状态调整为 ${status}`,
+      );
+      return tx.task.findUnique({ where: { id: taskId } });
+    });
+  }
+
+  async submissions() {
+    return this.prisma.submission.findMany({
+      include: {
+        task: { include: { merchant: true } },
+        promoter: { select: { id: true, username: true, displayName: true } },
+        reviewer: { select: { id: true, displayName: true } },
+      },
+      orderBy: [{ status: 'asc' }, { createdAt: 'desc' }],
+      take: 300,
+    });
+  }
+
+  async reviewSubmission(adminId: string, submissionId: string, body: ReviewSubmissionDto) {
+    return this.prisma.serializable(async (tx) => {
+      const submission = await tx.submission.findUnique({
+        where: { id: submissionId },
+        include: {
+          task: { include: { merchant: true } },
+          promoter: { include: { parent: true } },
+        },
+      });
+      if (!submission) throw new NotFoundException('推广提交不存在');
+      if (submission.status !== 'SUBMITTED') {
+        throw new BadRequestException('该提交已经处理，不能重复审核');
+      }
+      const note = body.note?.trim() ?? '';
+      await tx.submission.update({
+        where: { id: submission.id },
+        data: {
+          status: body.decision,
+          reviewerId: adminId,
+          reviewNote: note,
+          reviewedAt: new Date(),
+        },
+      });
+      if (body.decision === 'REJECTED') {
+        await this.funds.change(tx, {
+          userId: submission.promoterId,
+          availableDelta: submission.depositCents,
+          frozenDelta: -submission.depositCents,
+          type: 'GUARANTEE_REFUND',
+          referenceType: 'SUBMISSION',
+          referenceId: submission.id,
+          idempotencyKey: `submission:${submission.id}:guarantee:refund:rejected`,
+          memo: '推广凭证被驳回，本单保证金原额退回',
+          actorId: adminId,
+        });
+      } else {
+        const parent = submission.promoter.parent;
+        const referralCents =
+          parent && parent.role === 'PROMOTER' ? submission.task.referralCents : 0n;
+        const settlementCents = submission.task.commissionCents + referralCents;
+        const remainingBudget =
+          submission.task.budgetReservedCents -
+          submission.task.budgetSpentCents -
+          submission.task.budgetRefundedCents;
+        if (settlementCents > remainingBudget) {
+          throw new BadRequestException('任务剩余预算不足，无法审核通过');
+        }
+        await this.funds.change(tx, {
+          userId: submission.task.merchant.userId,
+          frozenDelta: -settlementCents,
+          type: 'TASK_BUDGET_SETTLEMENT',
+          referenceType: 'SUBMISSION',
+          referenceId: submission.id,
+          idempotencyKey: `submission:${submission.id}:budget:settlement`,
+          memo: '推广审核通过，结算本单佣金和直系上级返佣',
+          actorId: adminId,
+        });
+        await this.funds.change(tx, {
+          userId: submission.promoterId,
+          availableDelta: submission.depositCents,
+          frozenDelta: -submission.depositCents,
+          type: 'GUARANTEE_REFUND',
+          referenceType: 'SUBMISSION',
+          referenceId: submission.id,
+          idempotencyKey: `submission:${submission.id}:guarantee:refund:approved`,
+          memo: '推广审核通过，本单保证金原额退回',
+          actorId: adminId,
+        });
+        await this.funds.change(tx, {
+          userId: submission.promoterId,
+          availableDelta: submission.task.commissionCents,
+          type: 'COMMISSION',
+          referenceType: 'SUBMISSION',
+          referenceId: submission.id,
+          idempotencyKey: `submission:${submission.id}:commission`,
+          memo: '推广任务审核通过，发放佣金',
+          actorId: adminId,
+        });
+        if (parent && referralCents > 0n) {
+          await this.funds.change(tx, {
+            userId: parent.id,
+            availableDelta: referralCents,
+            type: 'REFERRAL',
+            referenceType: 'SUBMISSION',
+            referenceId: submission.id,
+            idempotencyKey: `submission:${submission.id}:referral:1`,
+            memo: '直属下级任务审核通过，发放一级返佣',
+            actorId: adminId,
+          });
+        }
+        await tx.task.update({
+          where: { id: submission.taskId },
+          data: {
+            budgetSpentCents: { increment: settlementCents },
+            approvedCount: { increment: 1 },
+            version: { increment: 1 },
+          },
+        });
+      }
+      await this.funds.audit(
+        tx,
+        adminId,
+        body.decision === 'APPROVED' ? 'SUBMISSION_APPROVE' : 'SUBMISSION_REJECT',
+        'SUBMISSION',
+        submission.id,
+        body.decision === 'APPROVED'
+          ? '审核通过，结算预算并发放佣金和真实存在的一级返佣'
+          : '审核驳回，退回保证金，不扣预算、不发佣金',
+      );
+      return tx.submission.findUnique({ where: { id: submission.id } });
+    });
+  }
+
+  async wallets() {
+    return this.prisma.user.findMany({
+      where: { role: { in: ['PROMOTER', 'MERCHANT'] } },
+      select: {
+        id: true,
+        username: true,
+        displayName: true,
+        role: true,
+        status: true,
+        wallet: true,
+        merchantProfile: { select: { id: true, companyName: true } },
+        parent: { select: { id: true, displayName: true } },
+      },
+      orderBy: [{ role: 'asc' }, { createdAt: 'asc' }],
+    });
+  }
+
+  async adjustWallet(adminId: string, userId: string, body: AdjustWalletDto) {
+    const amount = BigInt(body.amountCents);
+    if (amount === 0n) throw new BadRequestException('调账金额不能为零');
+    return this.prisma.serializable(async (tx) => {
+      const existing = await tx.ledgerEntry.findUnique({
+        where: { idempotencyKey: `adjustment:${body.requestId}` },
+      });
+      if (existing) return { duplicated: true, ledger: existing };
+      const user = await tx.user.findUnique({ where: { id: userId } });
+      if (!user) throw new NotFoundException('账号不存在');
+      const wallet = await this.funds.change(tx, {
+        userId,
+        availableDelta: amount,
+        type: 'MANUAL_ADJUSTMENT',
+        referenceType: 'ADJUSTMENT',
+        referenceId: body.requestId,
+        idempotencyKey: `adjustment:${body.requestId}`,
+        memo: body.reason.trim(),
+        actorId: adminId,
+      });
+      await this.funds.audit(
+        tx,
+        adminId,
+        'WALLET_ADJUST',
+        'USER',
+        userId,
+        `管理员调账 ${amount} 分；原因：${body.reason.trim()}`,
+      );
+      return { duplicated: false, wallet };
+    });
+  }
+
+  async withdrawals() {
+    return this.prisma.withdrawal.findMany({
+      include: {
+        user: {
+          select: {
+            id: true,
+            username: true,
+            displayName: true,
+            wallet: { select: { availableCents: true, frozenCents: true } },
+          },
+        },
+        reviewer: { select: { id: true, displayName: true } },
+      },
+      orderBy: [{ status: 'asc' }, { requestedAt: 'desc' }],
+      take: 300,
+    });
+  }
+
+  async reviewWithdrawal(adminId: string, withdrawalId: string, body: ReviewWithdrawalDto) {
+    return this.prisma.serializable(async (tx) => {
+      const withdrawal = await tx.withdrawal.findUnique({ where: { id: withdrawalId } });
+      if (!withdrawal) throw new NotFoundException('提现申请不存在');
+      if (withdrawal.status !== 'PENDING') {
+        throw new BadRequestException('提现申请已经处理');
+      }
+      const status = body.decision === 'PAID' ? 'PAID' : 'REJECTED';
+      await tx.withdrawal.update({
+        where: { id: withdrawal.id },
+        data: {
+          status,
+          reviewerId: adminId,
+          reviewNote: body.note?.trim() ?? '',
+          reviewedAt: new Date(),
+        },
+      });
+      if (status === 'PAID') {
+        await this.funds.change(tx, {
+          userId: withdrawal.userId,
+          availableDelta: -withdrawal.amountCents,
+          type: 'WITHDRAWAL_PAID',
+          referenceType: 'WITHDRAWAL',
+          referenceId: withdrawal.id,
+          idempotencyKey: `withdrawal:${withdrawal.id}:paid`,
+          memo: '管理员确认演示提现已打款，从可用余额扣除',
+          actorId: adminId,
+        });
+      }
+      await this.funds.audit(
+        tx,
+        adminId,
+        `WITHDRAWAL_${status}`,
+        'WITHDRAWAL',
+        withdrawal.id,
+        status === 'PAID'
+          ? '确认提现已打款并扣减可用余额'
+          : '驳回提现申请；申请阶段未扣款，无需退款',
+      );
+      return tx.withdrawal.findUnique({ where: { id: withdrawal.id } });
+    });
+  }
+
+  async auditLogs() {
+    return this.prisma.auditLog.findMany({
+      include: { actor: { select: { id: true, displayName: true, role: true } } },
+      orderBy: { createdAt: 'desc' },
+      take: 300,
+    });
+  }
+}

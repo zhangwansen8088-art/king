@@ -1,0 +1,14 @@
+node_modules/
+.pnpm-store/
+.env
+.env.*
+!.env.example
+dist/
+coverage/
+.vite/
+*.tsbuildinfo
+*.log
+.DS_Store
+apps/api/prisma/dev.db*
+uploads/
+backups/
