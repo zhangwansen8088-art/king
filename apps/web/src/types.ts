@@ -116,6 +116,13 @@ export interface Submission {
   } | null;
 }
 
+export interface SubmissionPage {
+  items: Submission[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
 export interface Withdrawal {
   id: string;
   userId: string;

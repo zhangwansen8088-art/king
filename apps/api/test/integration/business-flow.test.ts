@@ -266,6 +266,64 @@ describe('PostgreSQL 资金与任务业务闭环', () => {
     expect(clampedPage.items[0].status).toBe('ENDED');
   });
 
+  it('凭证列表按审核状态筛选，并返回稳定分页', async () => {
+    const actors = await seedBusinessActors();
+    const statuses = ['SUBMITTED', 'SUBMITTED', 'APPROVED', 'REJECTED', 'CLAIMED'] as const;
+    const taskIds = Array.from({ length: statuses.length }, () => randomUUID());
+    await prisma.task.createMany({
+      data: taskIds.map((id, index) => ({
+        id,
+        clientRequestId: randomUUID(),
+        merchantId: actors.merchantId,
+        title: `凭证分页测试任务 ${index + 1}`,
+        adContent: '凭证分页测试广告内容',
+        publicPoints: '凭证分页测试展示要求',
+        region: '上海',
+        adFeeCents: 100_000n,
+        rewardType: 'NORMAL',
+        commissionCents: 320n,
+        referralCents: 64n,
+        maxClaims: 1,
+        budgetReservedCents: 384n,
+        status: 'ENDED',
+        startsAt: new Date(startsAt),
+        endsAt: new Date(endsAt),
+      })),
+    });
+    await prisma.submission.createMany({
+      data: taskIds.map((taskId, index) => ({
+        taskId,
+        promoterId: actors.child.id,
+        depositCents: 0n,
+        status: statuses[index],
+        proofText: `凭证分页测试 ${index + 1}`,
+        submittedAt: statuses[index] === 'CLAIMED' ? null : fixedNow,
+        reviewedAt:
+          statuses[index] === 'APPROVED' || statuses[index] === 'REJECTED' ? fixedNow : null,
+      })),
+    });
+
+    const allPage = await admin.submissions({ page: 1, pageSize: 2 });
+    expect(allPage).toMatchObject({ total: 5, page: 1, pageSize: 2 });
+    expect(allPage.items).toHaveLength(2);
+
+    const submittedPage = await admin.submissions({
+      page: 2,
+      pageSize: 1,
+      status: 'SUBMITTED',
+    });
+    expect(submittedPage).toMatchObject({ total: 2, page: 2, pageSize: 1 });
+    expect(submittedPage.items[0].status).toBe('SUBMITTED');
+
+    const clampedPage = await admin.submissions({
+      page: 99,
+      pageSize: 2,
+      status: 'REJECTED',
+    });
+    expect(clampedPage).toMatchObject({ total: 1, page: 1, pageSize: 2 });
+    expect(clampedPage.items[0].status).toBe('REJECTED');
+  });
+
   it('凭证驳回只退保证金，不扣任务预算和佣金', async () => {
     const actors = await seedBusinessActors();
     const task = await admin.createTask(actors.adminUser.id, taskDraft(actors.merchantId));

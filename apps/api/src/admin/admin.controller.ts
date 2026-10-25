@@ -9,6 +9,7 @@ import {
   CreateTaskDto,
   ReviewSubmissionDto,
   ReviewWithdrawalDto,
+  SubmissionQueryDto,
   TaskQueryDto,
   UpdateMerchantDto,
   UpdateTaskStatusDto,
@@ -66,8 +67,8 @@ export class AdminController {
   }
 
   @Get('submissions')
-  submissions() {
-    return this.admin.submissions();
+  submissions(@Query() query: SubmissionQueryDto) {
+    return this.admin.submissions(query);
   }
 
   @Post('submissions/:id/review')

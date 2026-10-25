@@ -8,6 +8,7 @@ import type {
   MerchantSummary,
   SessionUser,
   Submission,
+  SubmissionPage,
   Task,
   TaskPage,
   Withdrawal,
@@ -70,11 +71,11 @@ export function AdminWorkspace({ user, onLogout }: AdminWorkspaceProps) {
   const [section, setSection] = useState<AdminSection>('overview');
   const [dashboard, setDashboard] = useState<AdminDashboard | null>(null);
   const [merchants, setMerchants] = useState<MerchantSummary[]>([]);
-  const [submissions, setSubmissions] = useState<Submission[]>([]);
   const [withdrawals, setWithdrawals] = useState<Withdrawal[]>([]);
   const [wallets, setWallets] = useState<AdminWallet[]>([]);
   const [loading, setLoading] = useState(true);
   const [taskRefreshKey, setTaskRefreshKey] = useState(0);
+  const [reviewRefreshKey, setReviewRefreshKey] = useState(0);
   const [notice, setNotice] = useState<Notice>(null);
   const [loggingOut, setLoggingOut] = useState(false);
 
@@ -109,12 +110,7 @@ export function AdminWorkspace({ user, onLogout }: AdminWorkspaceProps) {
           setDashboard(nextDashboard);
           setMerchants(nextMerchants);
         } else if (section === 'reviews') {
-          const [nextDashboard, nextSubmissions] = await Promise.all([
-            api.get<AdminDashboard>('/admin/dashboard'),
-            api.get<Submission[]>('/admin/submissions'),
-          ]);
-          setDashboard(nextDashboard);
-          setSubmissions(nextSubmissions);
+          setDashboard(await api.get<AdminDashboard>('/admin/dashboard'));
         } else if (section === 'withdrawals') {
           const [nextDashboard, nextWithdrawals] = await Promise.all([
             api.get<AdminDashboard>('/admin/dashboard'),
@@ -148,6 +144,7 @@ export function AdminWorkspace({ user, onLogout }: AdminWorkspaceProps) {
   async function afterMutation(message: string) {
     setNotice({ kind: 'success', text: message });
     if (section === 'tasks') setTaskRefreshKey((current) => current + 1);
+    if (section === 'reviews') setReviewRefreshKey((current) => current + 1);
     await load(true);
   }
 
@@ -272,7 +269,11 @@ export function AdminWorkspace({ user, onLogout }: AdminWorkspaceProps) {
               }}
             />
           ) : section === 'reviews' ? (
-            <ReviewsSection submissions={submissions} onReview={setReviewTarget} />
+            <ReviewsSection
+              refreshKey={reviewRefreshKey}
+              onError={showError}
+              onReview={setReviewTarget}
+            />
           ) : section === 'withdrawals' ? (
             <WithdrawalsSection withdrawals={withdrawals} onReview={setWithdrawalTarget} />
           ) : (
@@ -862,98 +863,186 @@ function TasksSection({
 }
 
 function ReviewsSection({
-  submissions,
+  refreshKey,
+  onError,
   onReview,
 }: {
-  submissions: Submission[];
+  refreshKey: number;
+  onError: (message: string) => void;
   onReview: (submission: Submission) => void;
 }) {
-  const [filter, setFilter] = useState<'SUBMITTED' | 'ALL'>('SUBMITTED');
-  const visible = submissions.filter(
-    (submission) => filter === 'ALL' || submission.status === 'SUBMITTED',
-  );
+  const [filter, setFilter] = useState<'ALL' | Submission['status']>('SUBMITTED');
+  const [pageData, setPageData] = useState<SubmissionPage | null>(null);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+    const params = new URLSearchParams({
+      page: String(page),
+      pageSize: String(pageSize),
+    });
+    if (filter !== 'ALL') params.set('status', filter);
+
+    setLoading(true);
+    void api
+      .get<SubmissionPage>(`/admin/submissions?${params.toString()}`)
+      .then((nextPage) => {
+        if (!active) return;
+        setPageData(nextPage);
+        if (nextPage.page !== page) setPage(nextPage.page);
+      })
+      .catch((caught) => {
+        if (active) onError(errorMessage(caught));
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [filter, onError, page, pageSize, refreshKey]);
+
+  const submissions = pageData?.items ?? [];
+  const total = pageData?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / (pageData?.pageSize ?? pageSize)));
 
   return (
     <div className="stack-section">
       <SectionHeading eyebrow="证据核验" title="凭证审核">
         通过会结算预算和佣金；驳回只退回推荐客户的保证金。
       </SectionHeading>
-      <div className="filter-bar">
-        <button
-          type="button"
-          className={filter === 'SUBMITTED' ? 'active' : ''}
-          onClick={() => setFilter('SUBMITTED')}
-        >
-          待审核
-        </button>
-        <button
-          type="button"
-          className={filter === 'ALL' ? 'active' : ''}
-          onClick={() => setFilter('ALL')}
-        >
-          全部记录
-        </button>
+      <div className="task-list-controls">
+        <div className="filter-bar">
+          {(['SUBMITTED', 'APPROVED', 'REJECTED', 'ALL'] as const).map((value) => (
+            <button
+              key={value}
+              type="button"
+              className={filter === value ? 'active' : ''}
+              onClick={() => {
+                setFilter(value);
+                setPage(1);
+              }}
+            >
+              {value === 'SUBMITTED'
+                ? '待审核'
+                : value === 'APPROVED'
+                  ? '已通过'
+                  : value === 'REJECTED'
+                    ? '已驳回'
+                    : '全部记录'}
+            </button>
+          ))}
+        </div>
+        <label className="page-size-control">
+          <span>每页</span>
+          <select
+            value={pageSize}
+            aria-label="凭证每页数量"
+            onChange={(event) => {
+              setPageSize(Number(event.target.value));
+              setPage(1);
+            }}
+          >
+            {[10, 20, 50, 100].map((value) => (
+              <option key={value} value={value}>
+                {value} 条
+              </option>
+            ))}
+          </select>
+        </label>
       </div>
 
-      <div className="review-grid">
-        {visible.map((submission) => {
-          const proofUrl = safeExternalUrl(submission.proofUrl);
-          return (
-            <article className="review-card" key={submission.id}>
-              <div className="review-card-head">
-                <div>
-                  <span className="review-sequence">{submission.task.region}</span>
-                  <h3>{submission.task.title}</h3>
-                  <p>
-                    {submission.promoter?.displayName ?? '推广客户'} ·{' '}
-                    {formatDate(submission.submittedAt ?? submission.claimedAt)} 提交
-                  </p>
+      {loading ? (
+        <LoadingBlock />
+      ) : (
+        <div className="review-grid">
+          {submissions.map((submission) => {
+            const proofUrl = safeExternalUrl(submission.proofUrl);
+            return (
+              <article className="review-card" key={submission.id}>
+                <div className="review-card-head">
+                  <div>
+                    <span className="review-sequence">{submission.task.region}</span>
+                    <h3>{submission.task.title}</h3>
+                    <p>
+                      {submission.promoter?.displayName ?? '推广客户'} ·{' '}
+                      {formatDate(submission.submittedAt ?? submission.claimedAt)} 提交
+                    </p>
+                  </div>
+                  <StatusPill status={submission.status} />
                 </div>
-                <StatusPill status={submission.status} />
-              </div>
-              <div className="proof-box">
-                <span>凭证说明</span>
-                <p>{submission.proofText || '尚未填写凭证说明'}</p>
-                {proofUrl ? (
-                  <a href={proofUrl} target="_blank" rel="noreferrer">
-                    查看外部凭证
-                  </a>
-                ) : submission.proofUrl ? (
-                  <span className="danger-text">凭证链接格式不受支持</span>
+                <div className="proof-box">
+                  <span>凭证说明</span>
+                  <p>{submission.proofText || '尚未填写凭证说明'}</p>
+                  {proofUrl ? (
+                    <a href={proofUrl} target="_blank" rel="noreferrer">
+                      查看外部凭证
+                    </a>
+                  ) : submission.proofUrl ? (
+                    <span className="danger-text">凭证链接格式不受支持</span>
+                  ) : (
+                    <span className="muted-text">未附带外部链接</span>
+                  )}
+                </div>
+                <div className="review-meta">
+                  <div>
+                    <span>单笔佣金</span>
+                    <Money cents={submission.task.commissionCents} size="small" />
+                  </div>
+                  <div>
+                    <span>保证金</span>
+                    <Money cents={submission.depositCents} size="small" />
+                  </div>
+                </div>
+                {submission.status === 'SUBMITTED' ? (
+                  <button
+                    className="primary-button full-button"
+                    type="button"
+                    onClick={() => onReview(submission)}
+                  >
+                    核验并处理
+                  </button>
                 ) : (
-                  <span className="muted-text">未附带外部链接</span>
+                  <p className="review-note">
+                    处理人：{submission.reviewer?.displayName ?? '—'}
+                    {submission.reviewNote ? ` · ${submission.reviewNote}` : ''}
+                  </p>
                 )}
-              </div>
-              <div className="review-meta">
-                <div>
-                  <span>单笔佣金</span>
-                  <Money cents={submission.task.commissionCents} size="small" />
-                </div>
-                <div>
-                  <span>保证金</span>
-                  <Money cents={submission.depositCents} size="small" />
-                </div>
-              </div>
-              {submission.status === 'SUBMITTED' ? (
-                <button
-                  className="primary-button full-button"
-                  type="button"
-                  onClick={() => onReview(submission)}
-                >
-                  核验并处理
-                </button>
-              ) : (
-                <p className="review-note">
-                  处理人：{submission.reviewer?.displayName ?? '—'}
-                  {submission.reviewNote ? ` · ${submission.reviewNote}` : ''}
-                </p>
-              )}
-            </article>
-          );
-        })}
-        {!visible.length ? (
-          <EmptyState title="当前没有待审核凭证" detail="推广客户提交凭证后会出现在这里。" />
-        ) : null}
+              </article>
+            );
+          })}
+          {!submissions.length ? (
+            <EmptyState
+              title="没有符合条件的凭证"
+              detail={total ? '切换到其他状态后再查看。' : '推广客户提交凭证后会出现在这里。'}
+            />
+          ) : null}
+        </div>
+      )}
+      <div className="list-pagination" aria-label="凭证分页">
+        <span>
+          共 {total} 条 · 第 {page} / {totalPages} 页
+        </span>
+        <div>
+          <button
+            className="ghost-button"
+            type="button"
+            disabled={loading || page <= 1}
+            onClick={() => setPage((current) => Math.max(1, current - 1))}
+          >
+            上一页
+          </button>
+          <button
+            className="ghost-button"
+            type="button"
+            disabled={loading || page >= totalPages}
+            onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+          >
+            下一页
+          </button>
+        </div>
       </div>
     </div>
   );
