@@ -8,8 +8,8 @@ import { FundsService } from './business/funds.service';
 import { JwtAuthGuard, RolesGuard } from './common/guards';
 import { HealthController } from './health.controller';
 import { MeController } from './me.controller';
-import { AlertService } from './operations/alert.service';
 import { AuditRetentionService } from './operations/audit-retention.service';
+import { OperationsModule } from './operations/operations.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { PromoterController } from './promoter/promoter.controller';
 import { PromoterService } from './promoter/promoter.service';
@@ -21,6 +21,7 @@ import { PromoterService } from './promoter/promoter.service';
       envFilePath: ['.env', '../../.env'],
     }),
     PrismaModule,
+    OperationsModule,
     AuthModule,
   ],
   controllers: [HealthController, MeController, AdminController, PromoterController],
@@ -28,7 +29,6 @@ import { PromoterService } from './promoter/promoter.service';
     AdminService,
     PromoterService,
     FundsService,
-    AlertService,
     AuditRetentionService,
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: RolesGuard },

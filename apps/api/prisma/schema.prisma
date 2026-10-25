@@ -19,6 +19,11 @@ enum UserStatus {
   DISABLED
 }
 
+enum LoginAttemptScope {
+  ACCOUNT
+  IP
+}
+
 enum TaskStatus {
   OPEN
   PAUSED
@@ -196,6 +201,22 @@ model RefreshSession {
   createdAt   DateTime  @default(now())
 
   @@index([userId, expiresAt])
+}
+
+model LoginAttempt {
+  id             String             @id @default(uuid()) @db.Uuid
+  scope          LoginAttemptScope
+  subjectHash    String
+  failureCount   Int                @default(0)
+  windowStartedAt DateTime
+  lastFailedAt   DateTime
+  lockedUntil    DateTime?
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  @@unique([scope, subjectHash])
+  @@index([updatedAt])
+  @@index([lockedUntil])
 }
 
 model LedgerEntry {

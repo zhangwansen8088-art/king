@@ -26,7 +26,7 @@ export class AuthController {
       body.username,
       body.password,
       request.get('user-agent') ?? '',
-      request.ip ?? '',
+      this.clientIp(request),
     );
     this.writeCookies(response, session.refreshToken, session.csrfToken, session.refreshExpiresAt);
     return {
@@ -48,7 +48,7 @@ export class AuthController {
         request.cookies?.[this.env.refreshCookieName] as string | undefined,
         this.csrfFromRequest(request),
         request.get('user-agent') ?? '',
-        request.ip ?? '',
+        this.clientIp(request),
       );
       this.writeCookies(
         response,
@@ -86,6 +86,14 @@ export class AuthController {
     const header = request.get('x-csrf-token');
     const cookie = request.cookies?.[this.env.csrfCookieName] as string | undefined;
     return header && cookie && header === cookie ? header : undefined;
+  }
+
+  /**
+   * Express 仅在来源命中可信代理网段时采用 X-Forwarded-For；
+   * 否则始终使用 TCP 连接地址，防止客户端伪造来源绕过限速。
+   */
+  private clientIp(request: Request): string {
+    return request.ip?.trim() || request.socket.remoteAddress?.trim() || 'unknown';
   }
 
   private assertOrigin(request: Request): void {

@@ -3,8 +3,10 @@ import { JwtService } from '@nestjs/jwt';
 import argon2 from 'argon2';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { loadEnv } from '../config/env';
+import { AlertService } from '../operations/alert.service';
 import { PrismaService } from '../prisma/prisma.service';
 import type { SessionUser } from '@max-promotion/contracts';
+import { buildLoginAttemptSubjects, LoginThrottleService } from './login-throttle.service';
 
 export interface IssuedSession {
   accessToken: string;
@@ -22,6 +24,10 @@ const sameHash = (left: string, right: string): boolean => {
   return a.length === b.length && timingSafeEqual(a, b);
 };
 
+// 不存在的账号也执行一次 Argon2 校验，避免通过响应耗时枚举账号。
+const DUMMY_PASSWORD_HASH =
+  '$argon2id$v=19$m=65536,t=3,p=4$IVhB4rV370kK+fpF6yEaZg$u/E2DyYX5PmiQvFkBOO41piD6WECjQy76AGOUrphGPA';
+
 @Injectable()
 export class AuthService {
   private readonly env = loadEnv();
@@ -29,6 +35,8 @@ export class AuthService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
+    private readonly throttle: LoginThrottleService,
+    private readonly alerts: AlertService,
   ) {}
 
   async login(
@@ -37,17 +45,57 @@ export class AuthService {
     userAgent: string,
     ipAddress: string,
   ): Promise<IssuedSession> {
+    await this.throttle.assertAllowed(username, ipAddress);
     const user = await this.prisma.user.findUnique({ where: { username: username.trim() } });
-    if (
-      !user ||
-      user.status !== 'ACTIVE' ||
-      user.role === 'MERCHANT' ||
-      !(await argon2.verify(user.passwordHash, password))
-    ) {
+    const passwordMatches = await argon2.verify(
+      user?.passwordHash ?? DUMMY_PASSWORD_HASH,
+      password,
+    );
+    const validUser = user && user.status === 'ACTIVE' && user.role !== 'MERCHANT';
+    if (!validUser || !passwordMatches) {
+      const lockouts = await this.throttle.recordFailure(username, ipAddress);
+      const accountHash = buildLoginAttemptSubjects(username, ipAddress)[0]?.subjectHash ?? '';
+      await this.prisma.auditLog.create({
+        data: {
+          ...(user ? { actorId: user.id } : {}),
+          action: 'LOGIN_FAILURE',
+          entityType: 'AUTH_ACCOUNT',
+          entityId: accountHash,
+          detail: '账号登录失败',
+          // 失败审计只保留来源信息，禁止写入密码、令牌或请求体。
+          metadata: { ipAddress: ipAddress.slice(0, 100), userAgent: userAgent.slice(0, 500) },
+        },
+      });
+      for (const lockout of lockouts) {
+        await this.prisma.auditLog.create({
+          data: {
+            action: 'LOGIN_LOCKED',
+            entityType: `AUTH_${lockout.scope}`,
+            entityId: lockout.subjectHash,
+            detail: '登录失败次数达到阈值，临时锁定',
+            metadata: {
+              failureCount: lockout.failureCount,
+              lockedUntil: lockout.lockedUntil.toISOString(),
+            },
+          },
+        });
+        void this.alerts.notifyLoginLockout({
+          type: 'login_lockout',
+          service: 'max-promotion-api',
+          environment: this.env.nodeEnv,
+          scope: lockout.scope,
+          subjectHash: lockout.subjectHash,
+          failureCount: lockout.failureCount,
+          lockedUntil: lockout.lockedUntil.toISOString(),
+          occurredAt: new Date().toISOString(),
+        });
+      }
       throw new UnauthorizedException('账号或密码不正确');
     }
 
     const session = this.toSessionUser(user);
+    // 成功登录只清除该账号的失败计数；IP 计数按窗口自然过期，防止切换账号重置攻击来源。
+    await this.throttle.clearAccount(username);
     await this.prisma.auditLog.create({
       data: {
         actorId: user.id,
