@@ -27,6 +27,12 @@ jobs:
       - name: 安装依赖
         run: pnpm install --frozen-lockfile
 
+      - name: 检查生产依赖漏洞
+        run: pnpm security:audit
+
+      - name: 检查同侪依赖
+        run: pnpm peers check
+
       - name: 生成 Prisma 客户端
         run: pnpm db:generate
 

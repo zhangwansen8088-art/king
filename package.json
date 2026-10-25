@@ -19,6 +19,7 @@
     "test:integration": "pnpm --filter @max-promotion/contracts build && pnpm --filter @max-promotion/api test:integration",
     "test:backup-restore": "bash scripts/verify-backup-restore.sh",
     "backup:create": "bash scripts/backup-postgres.sh",
+    "security:audit": "pnpm audit --prod --audit-level high --registry=https://registry.npmjs.org",
     "audit:legacy": "bash scripts/audit-legacy-sqlite.sh",
     "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm build",
     "db:generate": "pnpm --filter @max-promotion/api prisma:generate",
