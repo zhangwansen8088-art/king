@@ -120,74 +120,77 @@ export class PromoterService {
   }
 
   async claimRandom(userId: string) {
-    return this.prisma.serializable(async (tx) => {
-      const user = await tx.user.findUnique({ where: { id: userId } });
-      if (!user || user.role !== 'PROMOTER' || user.status !== 'ACTIVE') {
-        throw new BadRequestException('推广账号不可用');
-      }
-      const active = await tx.submission.findFirst({
-        where: { promoterId: userId, status: { in: ['CLAIMED', 'SUBMITTED'] } },
-      });
-      if (active) {
-        throw new BadRequestException('请先完成并等待当前任务审核');
-      }
+    return this.prisma.serializable(
+      async (tx) => {
+        const user = await tx.user.findUnique({ where: { id: userId } });
+        if (!user || user.role !== 'PROMOTER' || user.status !== 'ACTIVE') {
+          throw new BadRequestException('推广账号不可用');
+        }
+        const active = await tx.submission.findFirst({
+          where: { promoterId: userId, status: { in: ['CLAIMED', 'SUBMITTED'] } },
+        });
+        if (active) {
+          throw new BadRequestException('请先完成并等待当前任务审核');
+        }
 
-      const { start, end } = shanghaiDayBounds();
-      const claimedToday = await tx.submission.count({
-        where: { promoterId: userId, claimedAt: { gte: start, lt: end } },
-      });
-      if (claimedToday >= 60) throw new BadRequestException('今天已达到 60 单上限');
+        const { start, end } = shanghaiDayBounds();
+        const claimedToday = await tx.submission.count({
+          where: { promoterId: userId, claimedAt: { gte: start, lt: end } },
+        });
+        if (claimedToday >= 60) throw new BadRequestException('今天已达到 60 单上限');
 
-      const now = new Date();
-      const candidates = await tx.task.findMany({
-        where: {
-          status: 'OPEN',
-          rewardType: 'NORMAL',
-          startsAt: { lte: now },
-          endsAt: { gte: now },
-          submissions: { none: { promoterId: userId } },
-        },
-        orderBy: { createdAt: 'asc' },
-        take: 100,
-      });
-      const available = candidates.filter((task) => task.claimedCount < task.maxClaims);
-      if (!available.length) throw new BadRequestException('当前没有可随机分配的推广任务');
-      const task = available[Math.floor(Math.random() * available.length)];
-      if (!task) throw new BadRequestException('当前没有可随机分配的推广任务');
+        const now = new Date();
+        const candidates = await tx.task.findMany({
+          where: {
+            status: 'OPEN',
+            rewardType: 'NORMAL',
+            startsAt: { lte: now },
+            endsAt: { gte: now },
+            submissions: { none: { promoterId: userId } },
+          },
+          orderBy: { createdAt: 'asc' },
+          take: 100,
+        });
+        const available = candidates.filter((task) => task.claimedCount < task.maxClaims);
+        if (!available.length) throw new BadRequestException('当前没有可随机分配的推广任务');
+        const task = available[Math.floor(Math.random() * available.length)];
+        if (!task) throw new BadRequestException('当前没有可随机分配的推广任务');
 
-      const wallet = await tx.wallet.findUnique({ where: { userId } });
-      if (!wallet) throw new NotFoundException('资金钱包不存在');
-      const depositCents = randomGuaranteeCents(wallet.availableCents);
-      if (depositCents < 1n) throw new BadRequestException('可用余额不足，无法领取任务');
+        const wallet = await tx.wallet.findUnique({ where: { userId } });
+        if (!wallet) throw new NotFoundException('资金钱包不存在');
+        const depositCents = randomGuaranteeCents(wallet.availableCents);
+        if (depositCents < 1n) throw new BadRequestException('可用余额不足，无法领取任务');
 
-      const submission = await tx.submission.create({
-        data: { taskId: task.id, promoterId: userId, depositCents },
-      });
-      await tx.task.update({
-        where: { id: task.id },
-        data: { claimedCount: { increment: 1 }, version: { increment: 1 } },
-      });
-      await this.funds.change(tx, {
-        userId,
-        availableDelta: -depositCents,
-        frozenDelta: depositCents,
-        type: 'GUARANTEE_FREEZE',
-        referenceType: 'SUBMISSION',
-        referenceId: submission.id,
-        idempotencyKey: `submission:${submission.id}:guarantee:freeze`,
-        memo: `领取“${task.title}”，冻结本单保证金`,
-        actorId: userId,
-      });
-      await this.funds.audit(
-        tx,
-        userId,
-        'SUBMISSION_CLAIM',
-        'SUBMISSION',
-        submission.id,
-        `随机领取任务“${task.title}”，冻结保证金 ${depositCents} 分`,
-      );
-      return submission;
-    });
+        const submission = await tx.submission.create({
+          data: { taskId: task.id, promoterId: userId, depositCents },
+        });
+        await tx.task.update({
+          where: { id: task.id },
+          data: { claimedCount: { increment: 1 }, version: { increment: 1 } },
+        });
+        await this.funds.change(tx, {
+          userId,
+          availableDelta: -depositCents,
+          frozenDelta: depositCents,
+          type: 'GUARANTEE_FREEZE',
+          referenceType: 'SUBMISSION',
+          referenceId: submission.id,
+          idempotencyKey: `submission:${submission.id}:guarantee:freeze`,
+          memo: `领取“${task.title}”，冻结本单保证金`,
+          actorId: userId,
+        });
+        await this.funds.audit(
+          tx,
+          userId,
+          'SUBMISSION_CLAIM',
+          'SUBMISSION',
+          submission.id,
+          `随机领取任务“${task.title}”，冻结保证金 ${depositCents} 分`,
+        );
+        return submission;
+      },
+      () => new BadRequestException('当前没有可随机分配的推广任务'),
+    );
   }
 
   async submitProof(userId: string, submissionId: string, body: SubmitProofDto) {
