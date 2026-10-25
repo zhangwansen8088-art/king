@@ -13,6 +13,7 @@ import {
   TaskQueryDto,
   UpdateMerchantDto,
   UpdateTaskStatusDto,
+  WalletQueryDto,
   WithdrawalQueryDto,
 } from './admin.dto';
 import { AdminService } from './admin.service';
@@ -82,8 +83,8 @@ export class AdminController {
   }
 
   @Get('wallets')
-  wallets() {
-    return this.admin.wallets();
+  wallets(@Query() query: WalletQueryDto) {
+    return this.admin.wallets(query);
   }
 
   @Post('wallets/:userId/adjust')

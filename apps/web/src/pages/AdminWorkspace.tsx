@@ -4,6 +4,7 @@ import { api } from '../api';
 import type {
   AdminDashboard,
   AdminWallet,
+  AdminWalletPage,
   AuditLogPage,
   MerchantSummary,
   SessionUser,
@@ -72,8 +73,8 @@ export function AdminWorkspace({ user, onLogout }: AdminWorkspaceProps) {
   const [section, setSection] = useState<AdminSection>('overview');
   const [dashboard, setDashboard] = useState<AdminDashboard | null>(null);
   const [merchants, setMerchants] = useState<MerchantSummary[]>([]);
-  const [wallets, setWallets] = useState<AdminWallet[]>([]);
   const [loading, setLoading] = useState(true);
+  const [walletRefreshKey, setWalletRefreshKey] = useState(0);
   const [taskRefreshKey, setTaskRefreshKey] = useState(0);
   const [reviewRefreshKey, setReviewRefreshKey] = useState(0);
   const [withdrawalRefreshKey, setWithdrawalRefreshKey] = useState(0);
@@ -95,14 +96,12 @@ export function AdminWorkspace({ user, onLogout }: AdminWorkspaceProps) {
         if (section === 'overview') {
           setDashboard(await api.get<AdminDashboard>('/admin/dashboard'));
         } else if (section === 'merchants') {
-          const [nextDashboard, nextMerchants, nextWallets] = await Promise.all([
+          const [nextDashboard, nextMerchants] = await Promise.all([
             api.get<AdminDashboard>('/admin/dashboard'),
             api.get<MerchantSummary[]>('/admin/merchants'),
-            api.get<AdminWallet[]>('/admin/wallets'),
           ]);
           setDashboard(nextDashboard);
           setMerchants(nextMerchants);
-          setWallets(nextWallets);
         } else if (section === 'tasks') {
           const [nextDashboard, nextMerchants] = await Promise.all([
             api.get<AdminDashboard>('/admin/dashboard'),
@@ -142,6 +141,7 @@ export function AdminWorkspace({ user, onLogout }: AdminWorkspaceProps) {
     if (section === 'tasks') setTaskRefreshKey((current) => current + 1);
     if (section === 'reviews') setReviewRefreshKey((current) => current + 1);
     if (section === 'withdrawals') setWithdrawalRefreshKey((current) => current + 1);
+    if (section === 'merchants') setWalletRefreshKey((current) => current + 1);
     await load(true);
   }
 
@@ -240,7 +240,8 @@ export function AdminWorkspace({ user, onLogout }: AdminWorkspaceProps) {
           ) : section === 'merchants' ? (
             <MerchantsSection
               merchants={merchants}
-              wallets={wallets}
+              refreshKey={walletRefreshKey}
+              onError={showError}
               onNew={() => {
                 setEditingMerchant(null);
                 setMerchantModalOpen(true);
@@ -465,21 +466,63 @@ function OverviewSection({
 
 function MerchantsSection({
   merchants,
-  wallets,
+  refreshKey,
+  onError,
   onNew,
   onEdit,
   onAdjust,
 }: {
   merchants: MerchantSummary[];
-  wallets: AdminWallet[];
+  refreshKey: number;
+  onError: (message: string) => void;
   onNew: () => void;
   onEdit: (merchant: MerchantSummary) => void;
   onAdjust: (wallet: AdminWallet) => void;
 }) {
   const [accountFilter, setAccountFilter] = useState<'ALL' | 'MERCHANT' | 'PROMOTER'>('MERCHANT');
-  const visibleWallets = wallets.filter(
-    (wallet) => accountFilter === 'ALL' || wallet.role === accountFilter,
-  );
+  const [pageData, setPageData] = useState<AdminWalletPage | null>(null);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+
+  useEffect(() => {
+    let active = true;
+    const params = new URLSearchParams({
+      page: String(page),
+      pageSize: String(pageSize),
+    });
+    if (accountFilter !== 'ALL') params.set('role', accountFilter);
+
+    setLoading(true);
+    setLoadError('');
+    void api
+      .get<AdminWalletPage>(`/admin/wallets?${params.toString()}`)
+      .then((nextPage) => {
+        if (!active) return;
+        setPageData(nextPage);
+        // 后端回退到有效页码时同步前端，避免分页状态与结果不一致。
+        if (nextPage.page !== page) setPage(nextPage.page);
+      })
+      .catch((caught) => {
+        if (!active) return;
+        // 请求失败时清空旧页数据，防止用户把过期余额当成最新结果。
+        setPageData(null);
+        setLoadError(errorMessage(caught));
+        onError(errorMessage(caught));
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [accountFilter, onError, page, pageSize, refreshKey]);
+
+  const wallets = pageData?.items ?? [];
+  const total = pageData?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / (pageData?.pageSize ?? pageSize)));
 
   return (
     <div className="stack-section">
@@ -515,7 +558,22 @@ function MerchantsSection({
               </thead>
               <tbody>
                 {merchants.map((merchant) => {
-                  const wallet = wallets.find((item) => item.merchantProfile?.id === merchant.id);
+                  // 商户资料已包含钱包，无需依赖可能尚未加载到当前页的账户分页结果。
+                  const wallet = merchant.user.wallet
+                    ? {
+                        id: merchant.user.id,
+                        username: merchant.user.username,
+                        displayName: merchant.user.displayName,
+                        role: 'MERCHANT' as const,
+                        status: merchant.user.status,
+                        wallet: merchant.user.wallet,
+                        merchantProfile: {
+                          id: merchant.id,
+                          companyName: merchant.companyName,
+                        },
+                        parent: null,
+                      }
+                    : null;
                   return (
                     <tr key={merchant.id}>
                       <td>
@@ -575,51 +633,104 @@ function MerchantsSection({
             <span>资金账户</span>
             <p>调账只改可用余额，必须填写原因并生成资金流水。</p>
           </div>
+          <span>共 {total} 个</span>
+        </div>
+        <div className="task-list-controls">
           <div className="segmented-control" aria-label="账户类型筛选">
             {(['MERCHANT', 'PROMOTER', 'ALL'] as const).map((value) => (
               <button
                 key={value}
                 type="button"
                 className={accountFilter === value ? 'active' : ''}
-                onClick={() => setAccountFilter(value)}
+                onClick={() => {
+                  setAccountFilter(value);
+                  setPage(1);
+                }}
               >
                 {value === 'MERCHANT' ? '商户' : value === 'PROMOTER' ? '推广客户' : '全部'}
               </button>
             ))}
           </div>
+          <label className="page-size-control">
+            <span>每页</span>
+            <select
+              value={pageSize}
+              aria-label="资金账户每页数量"
+              onChange={(event) => {
+                setPageSize(Number(event.target.value));
+                setPage(1);
+              }}
+            >
+              {[10, 20, 50, 100].map((value) => (
+                <option key={value} value={value}>
+                  {value} 条
+                </option>
+              ))}
+            </select>
+          </label>
         </div>
-        <div className="account-list">
-          {visibleWallets.map((wallet) => (
-            <div className="account-row" key={wallet.id}>
-              <span className="account-role">{wallet.role === 'MERCHANT' ? '商' : '推'}</span>
-              <div className="account-name">
-                <strong>{wallet.merchantProfile?.companyName ?? wallet.displayName}</strong>
-                <span>
-                  {wallet.role === 'MERCHANT' ? '后台商户资料' : '推广客户'}
-                  {wallet.parent ? ` · 上级 ${wallet.parent.displayName}` : ''}
-                </span>
+        {loading ? (
+          <LoadingBlock />
+        ) : (
+          <div className="account-list">
+            {wallets.map((wallet) => (
+              <div className="account-row" key={wallet.id}>
+                <span className="account-role">{wallet.role === 'MERCHANT' ? '商' : '推'}</span>
+                <div className="account-name">
+                  <strong>{wallet.merchantProfile?.companyName ?? wallet.displayName}</strong>
+                  <span>
+                    {wallet.role === 'MERCHANT' ? '后台商户资料' : '推广客户'}
+                    {wallet.parent ? ` · 上级 ${wallet.parent.displayName}` : ''}
+                  </span>
+                </div>
+                <div className="account-money">
+                  <span>可用</span>
+                  <Money cents={wallet.wallet?.availableCents ?? '0'} size="small" />
+                </div>
+                <div className="account-money">
+                  <span>冻结</span>
+                  <Money cents={wallet.wallet?.frozenCents ?? '0'} size="small" />
+                </div>
+                <button
+                  className="small-button"
+                  type="button"
+                  disabled={!wallet.wallet}
+                  onClick={() => onAdjust(wallet)}
+                >
+                  调整余额
+                </button>
               </div>
-              <div className="account-money">
-                <span>可用</span>
-                <Money cents={wallet.wallet?.availableCents ?? '0'} size="small" />
-              </div>
-              <div className="account-money">
-                <span>冻结</span>
-                <Money cents={wallet.wallet?.frozenCents ?? '0'} size="small" />
-              </div>
-              <button
-                className="small-button"
-                type="button"
-                disabled={!wallet.wallet}
-                onClick={() => onAdjust(wallet)}
-              >
-                调整余额
-              </button>
-            </div>
-          ))}
-          {!visibleWallets.length ? (
-            <EmptyState title="暂无匹配的资金账户" detail="切换账户类型后再查看。" />
-          ) : null}
+            ))}
+            {!wallets.length ? (
+              <EmptyState
+                title={loadError ? '资金账户加载失败' : '暂无匹配的资金账户'}
+                detail={loadError || '切换账户类型后再查看。'}
+              />
+            ) : null}
+          </div>
+        )}
+        <div className="list-pagination" aria-label="资金账户分页">
+          <span>
+            共 {total} 条 · 第 {page} / {totalPages} 页
+          </span>
+          <div>
+            <button
+              className="ghost-button"
+              type="button"
+              disabled={loading || page <= 1}
+              onClick={() => setPage((current) => Math.max(1, current - 1))}
+            >
+              上一页
+            </button>
+            <button
+              className="ghost-button"
+              type="button"
+              disabled={loading || page >= totalPages}
+              onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+            >
+              下一页
+            </button>
+          </div>
         </div>
       </section>
     </div>

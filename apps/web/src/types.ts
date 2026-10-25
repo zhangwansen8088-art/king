@@ -203,6 +203,13 @@ export interface AdminWallet {
   } | null;
 }
 
+export interface AdminWalletPage {
+  items: AdminWallet[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
 export interface WithdrawalQuota {
   approvedClaims: number;
   totalQuota: number;

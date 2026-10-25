@@ -391,6 +391,55 @@ describe('PostgreSQL 资金与任务业务闭环', () => {
     expect(clampedPage.items[0].status).toBe('REJECTED');
   });
 
+  it('资金账户列表按角色和状态筛选，并返回稳定分页', async () => {
+    const actors = await seedBusinessActors();
+    await admin.createMerchant(actors.adminUser.id, {
+      companyName: '分页测试第二商户',
+      displayName: '分页测试第二商户账号',
+      contactName: '第二联系人',
+    });
+    await prisma.user.update({
+      where: { id: actors.child.id },
+      data: { status: 'DISABLED' },
+    });
+
+    const allPage = await admin.wallets({ page: 1, pageSize: 20 });
+    expect(allPage).toMatchObject({ total: 4, page: 1, pageSize: 20 });
+    expect(
+      allPage.items.every((item) => item.role === 'PROMOTER' || item.role === 'MERCHANT'),
+    ).toBe(true);
+
+    const firstMerchantPage = await admin.wallets({
+      page: 1,
+      pageSize: 1,
+      role: 'MERCHANT',
+    });
+    const secondMerchantPage = await admin.wallets({
+      page: 2,
+      pageSize: 1,
+      role: 'MERCHANT',
+    });
+    expect(firstMerchantPage).toMatchObject({ total: 2, page: 1, pageSize: 1 });
+    expect(secondMerchantPage).toMatchObject({ total: 2, page: 2, pageSize: 1 });
+    expect(firstMerchantPage.items[0].id).not.toBe(secondMerchantPage.items[0].id);
+
+    const clampedPage = await admin.wallets({ page: 99, pageSize: 1, role: 'MERCHANT' });
+    expect(clampedPage).toMatchObject({ total: 2, page: 2, pageSize: 1 });
+    expect(clampedPage.items[0].id).toBe(secondMerchantPage.items[0].id);
+
+    const disabledPromoterPage = await admin.wallets({
+      page: 1,
+      pageSize: 20,
+      role: 'PROMOTER',
+      status: 'DISABLED',
+    });
+    expect(disabledPromoterPage).toMatchObject({ total: 1, page: 1, pageSize: 20 });
+    expect(disabledPromoterPage.items[0]).toMatchObject({
+      id: actors.child.id,
+      status: 'DISABLED',
+    });
+  });
+
   it('提现驳回不扣款，打款只扣一次，重复审核被拒绝', async () => {
     const actors = await seedBusinessActors();
     await grantApprovedClaims(actors.child.id, actors.merchantId, 120);

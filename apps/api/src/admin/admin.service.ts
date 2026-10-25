@@ -1,4 +1,10 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  InternalServerErrorException,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import argon2 from 'argon2';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -15,11 +21,14 @@ import type {
   SubmissionQueryDto,
   TaskQueryDto,
   UpdateMerchantDto,
+  WalletQueryDto,
   WithdrawalQueryDto,
 } from './admin.dto';
 
 @Injectable()
 export class AdminService {
+  private readonly logger = new Logger(AdminService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly funds: FundsService,
@@ -422,21 +431,46 @@ export class AdminService {
     });
   }
 
-  async wallets() {
-    return this.prisma.user.findMany({
-      where: { role: { in: ['PROMOTER', 'MERCHANT'] } },
-      select: {
-        id: true,
-        username: true,
-        displayName: true,
-        role: true,
-        status: true,
-        wallet: true,
-        merchantProfile: { select: { id: true, companyName: true } },
-        parent: { select: { id: true, displayName: true } },
-      },
-      orderBy: [{ role: 'asc' }, { createdAt: 'asc' }],
-    });
+  async wallets(query: WalletQueryDto = {}) {
+    const pageSize = query.pageSize ?? 20;
+    const requestedPage = query.page ?? 1;
+    // 角色白名单固定在查询层，避免管理员账号被错误纳入资金账户列表。
+    const where: Prisma.UserWhereInput = {
+      role: query.role ?? { in: ['PROMOTER', 'MERCHANT'] },
+      ...(query.status ? { status: query.status } : {}),
+    };
+
+    try {
+      const total = await this.prisma.user.count({ where });
+      // 数据减少或页码越界时回退到最后一页，避免前端停留在空页。
+      const lastPage = Math.max(1, Math.ceil(total / pageSize));
+      const page = Math.min(requestedPage, lastPage);
+      const items = await this.prisma.user.findMany({
+        where,
+        select: {
+          id: true,
+          username: true,
+          displayName: true,
+          role: true,
+          status: true,
+          wallet: true,
+          merchantProfile: { select: { id: true, companyName: true } },
+          parent: { select: { id: true, displayName: true } },
+        },
+        // id 作为第二排序字段，保证同一创建时间下跨页结果稳定。
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      });
+      return { items, total, page, pageSize };
+    } catch (caught) {
+      // 数据库异常只记录服务端，不把底层连接或 SQL 信息返回给浏览器。
+      this.logger.error(
+        '查询资金账户列表失败',
+        caught instanceof Error ? caught.stack : String(caught),
+      );
+      throw new InternalServerErrorException('资金账户列表加载失败，请稍后重试');
+    }
   }
 
   async adjustWallet(adminId: string, userId: string, body: AdjustWalletDto) {

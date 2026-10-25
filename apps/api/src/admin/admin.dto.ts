@@ -263,6 +263,39 @@ export class WithdrawalQueryDto {
   status?: 'PENDING' | 'PAID' | 'REJECTED';
 }
 
+export class WalletQueryDto {
+  @ApiPropertyOptional({ default: 1, minimum: 1 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page?: number = 1;
+
+  @ApiPropertyOptional({ default: 20, minimum: 1, maximum: 100 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  pageSize?: number = 20;
+
+  @ApiPropertyOptional({
+    enum: ['PROMOTER', 'MERCHANT'],
+    description: '按资金账户所属角色筛选',
+  })
+  @IsOptional()
+  @IsIn(['PROMOTER', 'MERCHANT'])
+  role?: 'PROMOTER' | 'MERCHANT';
+
+  @ApiPropertyOptional({
+    enum: ['ACTIVE', 'DISABLED'],
+    description: '按账号状态筛选',
+  })
+  @IsOptional()
+  @IsIn(['ACTIVE', 'DISABLED'])
+  status?: 'ACTIVE' | 'DISABLED';
+}
+
 export class ReviewSubmissionDto {
   @ApiProperty({ enum: ['APPROVED', 'REJECTED'] })
   @IsIn(['APPROVED', 'REJECTED'])
