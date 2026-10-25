@@ -236,6 +236,154 @@ describe('PostgreSQL 资金与任务业务闭环', () => {
     expect(closedTask.budgetRefundedCents).toBe(384n);
   });
 
+  it('同一推广客户并发领任务时只生成一条提交和一笔保证金流水', async () => {
+    const actors = await seedBusinessActors();
+    await admin.createTask(actors.adminUser.id, taskDraft(actors.merchantId));
+
+    // 固定随机数，确保并发请求竞争同一任务，并得到可重复验证的保证金金额。
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0);
+    const results = await Promise.allSettled(
+      Array.from({ length: 8 }, () => promoter.claimRandom(actors.child.id)),
+    );
+    random.mockRestore();
+
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    for (const result of results) {
+      if (result.status === 'rejected') {
+        expect(result.reason).toBeInstanceOf(BadRequestException);
+      }
+    }
+
+    const [submissionCount, guaranteeCount, task, wallet] = await Promise.all([
+      prisma.submission.count({ where: { promoterId: actors.child.id } }),
+      prisma.ledgerEntry.count({
+        where: { type: 'GUARANTEE_FREEZE', referenceType: 'SUBMISSION' },
+      }),
+      prisma.task.findFirstOrThrow({ where: { merchantId: actors.merchantId } }),
+      prisma.wallet.findUniqueOrThrow({ where: { userId: actors.child.id } }),
+    ]);
+    expect(submissionCount).toBe(1);
+    expect(guaranteeCount).toBe(1);
+    expect(task.claimedCount).toBe(1);
+    expect(wallet).toMatchObject({ availableCents: 60_000n, frozenCents: 140_000n });
+  });
+
+  it('多个推广客户并发领取单名额任务时不能超卖', async () => {
+    const actors = await seedBusinessActors();
+    const otherPromoters = await Promise.all(
+      Array.from({ length: 6 }, (_, index) =>
+        createUser({
+          username: `concurrent-promoter-${index + 1}`,
+          displayName: `并发推广客户 ${index + 1}`,
+          role: 'PROMOTER',
+          availableCents: 100_000n,
+        }),
+      ),
+    );
+    const task = await admin.createTask(
+      actors.adminUser.id,
+      taskDraft(actors.merchantId, { maxClaims: 1 }),
+    );
+    const promoterIds = [actors.child.id, ...otherPromoters.map((user) => user.id)];
+
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0);
+    const results = await Promise.allSettled(
+      promoterIds.map((promoterId) => promoter.claimRandom(promoterId)),
+    );
+    random.mockRestore();
+
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    for (const result of results) {
+      if (result.status === 'rejected') {
+        expect(result.reason).toBeInstanceOf(BadRequestException);
+      }
+    }
+
+    const claimedTask = await prisma.task.findUniqueOrThrow({ where: { id: task.id } });
+    expect(claimedTask.claimedCount).toBe(1);
+    expect(await prisma.submission.count({ where: { taskId: task.id } })).toBe(1);
+    expect(
+      await prisma.ledgerEntry.count({
+        where: { type: 'GUARANTEE_FREEZE' },
+      }),
+    ).toBe(1);
+  });
+
+  it('商户广告余额不足时拒绝发布，且任务和资金流水都不落库', async () => {
+    const actors = await seedBusinessActors();
+    await prisma.wallet.update({
+      where: { userId: actors.merchantUserId },
+      data: { availableCents: 1n, frozenCents: 0n },
+    });
+    const draft = taskDraft(actors.merchantId);
+
+    await expect(admin.createTask(actors.adminUser.id, draft)).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+
+    const [taskCount, freezeCount, auditCount, wallet] = await Promise.all([
+      prisma.task.count(),
+      prisma.ledgerEntry.count({ where: { type: 'TASK_BUDGET_FREEZE' } }),
+      prisma.auditLog.count({ where: { action: 'TASK_CREATE' } }),
+      prisma.wallet.findUniqueOrThrow({ where: { userId: actors.merchantUserId } }),
+    ]);
+    expect(taskCount).toBe(0);
+    expect(freezeCount).toBe(0);
+    expect(auditCount).toBe(0);
+    expect(wallet).toMatchObject({ availableCents: 1n, frozenCents: 0n });
+  });
+
+  it('同一提现并发审核打款时只能扣款一次', async () => {
+    const actors = await seedBusinessActors();
+    await grantApprovedClaims(actors.child.id, actors.merchantId, 120);
+    const withdrawal = await promoter.requestWithdrawal(actors.child.id, {
+      amountCents: '50000',
+      payoutAccount: '支付宝：并发提现测试收款人',
+    });
+
+    const results = await Promise.allSettled(
+      Array.from({ length: 8 }, () =>
+        admin.reviewWithdrawal(actors.adminUser.id, withdrawal.id, {
+          decision: 'PAID',
+          note: '并发打款测试',
+        }),
+      ),
+    );
+
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    for (const result of results) {
+      if (result.status === 'rejected') {
+        expect(result.reason).toBeInstanceOf(BadRequestException);
+      }
+    }
+
+    const [wallet, paidCount, reviewAuditCount] = await Promise.all([
+      prisma.wallet.findUniqueOrThrow({ where: { userId: actors.child.id } }),
+      prisma.ledgerEntry.count({
+        where: { type: 'WITHDRAWAL_PAID', referenceId: withdrawal.id },
+      }),
+      prisma.auditLog.count({
+        where: { action: 'WITHDRAWAL_PAID', entityId: withdrawal.id },
+      }),
+    ]);
+    expect(wallet.availableCents).toBe(150_000n);
+    expect(paidCount).toBe(1);
+    expect(reviewAuditCount).toBe(1);
+  });
+
+  it('同一 requestId 并发发布任务时稳定返回同一任务', async () => {
+    const actors = await seedBusinessActors();
+    const draft = taskDraft(actors.merchantId);
+
+    const results = await Promise.all(
+      Array.from({ length: 8 }, () => admin.createTask(actors.adminUser.id, draft)),
+    );
+
+    expect(new Set(results.map((task) => task.id)).size).toBe(1);
+    expect(await prisma.task.count()).toBe(1);
+    expect(await prisma.ledgerEntry.count({ where: { type: 'TASK_BUDGET_FREEZE' } })).toBe(1);
+  });
+
   it('未取得商户确认和提交人声明时，禁止创建任务或提交凭证', async () => {
     const actors = await seedBusinessActors();
     const draft = taskDraft(actors.merchantId);
