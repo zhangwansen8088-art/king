@@ -38,7 +38,11 @@ services:
     environment:
       NODE_ENV: production
       PORT: 3000
+      # 容器内的 WEB_ORIGIN 由 COMPOSE_WEB_ORIGIN 注入；生产必须设为正式域名（含协议），
+      # 否则登录、刷新、注销会被来源校验判 403。
       WEB_ORIGIN: ${COMPOSE_WEB_ORIGIN:-http://localhost:8080}
+      # 这里的默认值 false 会覆盖代码中 NODE_ENV=production 时默认开启 Secure 的逻辑，
+      # 生产部署必须在 .env 显式设置 COOKIE_SECURE=true。
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
       DATABASE_URL: postgresql://${POSTGRES_USER:-max_promotion}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-max_promotion}?schema=public
       JWT_SECRET: ${JWT_SECRET:?请先在 .env 设置至少 32 位的 JWT_SECRET}
