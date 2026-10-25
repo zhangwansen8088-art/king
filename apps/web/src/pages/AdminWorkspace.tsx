@@ -6,6 +6,7 @@ import type {
   AdminWallet,
   AdminWalletPage,
   AuditLogPage,
+  MerchantPage,
   MerchantSummary,
   SessionUser,
   Submission,
@@ -74,6 +75,7 @@ export function AdminWorkspace({ user, onLogout }: AdminWorkspaceProps) {
   const [dashboard, setDashboard] = useState<AdminDashboard | null>(null);
   const [merchants, setMerchants] = useState<MerchantSummary[]>([]);
   const [loading, setLoading] = useState(true);
+  const [merchantRefreshKey, setMerchantRefreshKey] = useState(0);
   const [walletRefreshKey, setWalletRefreshKey] = useState(0);
   const [taskRefreshKey, setTaskRefreshKey] = useState(0);
   const [reviewRefreshKey, setReviewRefreshKey] = useState(0);
@@ -96,12 +98,8 @@ export function AdminWorkspace({ user, onLogout }: AdminWorkspaceProps) {
         if (section === 'overview') {
           setDashboard(await api.get<AdminDashboard>('/admin/dashboard'));
         } else if (section === 'merchants') {
-          const [nextDashboard, nextMerchants] = await Promise.all([
-            api.get<AdminDashboard>('/admin/dashboard'),
-            api.get<MerchantSummary[]>('/admin/merchants'),
-          ]);
-          setDashboard(nextDashboard);
-          setMerchants(nextMerchants);
+          // 商户列表由子组件按分页条件单独请求，这里只刷新顶部统计。
+          setDashboard(await api.get<AdminDashboard>('/admin/dashboard'));
         } else if (section === 'tasks') {
           const [nextDashboard, nextMerchants] = await Promise.all([
             api.get<AdminDashboard>('/admin/dashboard'),
@@ -141,7 +139,11 @@ export function AdminWorkspace({ user, onLogout }: AdminWorkspaceProps) {
     if (section === 'tasks') setTaskRefreshKey((current) => current + 1);
     if (section === 'reviews') setReviewRefreshKey((current) => current + 1);
     if (section === 'withdrawals') setWithdrawalRefreshKey((current) => current + 1);
-    if (section === 'merchants') setWalletRefreshKey((current) => current + 1);
+    if (section === 'merchants') {
+      // 商户资料和余额可能同时变化，两个分页列表都需要重新获取。
+      setMerchantRefreshKey((current) => current + 1);
+      setWalletRefreshKey((current) => current + 1);
+    }
     await load(true);
   }
 
@@ -239,8 +241,8 @@ export function AdminWorkspace({ user, onLogout }: AdminWorkspaceProps) {
             <OverviewSection dashboard={dashboard} onNavigate={setSection} />
           ) : section === 'merchants' ? (
             <MerchantsSection
-              merchants={merchants}
-              refreshKey={walletRefreshKey}
+              merchantRefreshKey={merchantRefreshKey}
+              walletRefreshKey={walletRefreshKey}
               onError={showError}
               onNew={() => {
                 setEditingMerchant(null);
@@ -465,26 +467,70 @@ function OverviewSection({
 }
 
 function MerchantsSection({
-  merchants,
-  refreshKey,
+  merchantRefreshKey,
+  walletRefreshKey,
   onError,
   onNew,
   onEdit,
   onAdjust,
 }: {
-  merchants: MerchantSummary[];
-  refreshKey: number;
+  merchantRefreshKey: number;
+  walletRefreshKey: number;
   onError: (message: string) => void;
   onNew: () => void;
   onEdit: (merchant: MerchantSummary) => void;
   onAdjust: (wallet: AdminWallet) => void;
 }) {
+  const [merchantPageData, setMerchantPageData] = useState<MerchantPage | null>(null);
+  const [merchantPage, setMerchantPage] = useState(1);
+  const [merchantPageSize, setMerchantPageSize] = useState(20);
+  const [merchantStatus, setMerchantStatus] = useState<'ALL' | 'ACTIVE' | 'DISABLED'>('ALL');
+  const [searchInput, setSearchInput] = useState('');
+  const [search, setSearch] = useState('');
+  const [merchantLoading, setMerchantLoading] = useState(true);
+  const [merchantLoadError, setMerchantLoadError] = useState('');
   const [accountFilter, setAccountFilter] = useState<'ALL' | 'MERCHANT' | 'PROMOTER'>('MERCHANT');
   const [pageData, setPageData] = useState<AdminWalletPage | null>(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
+
+  useEffect(() => {
+    let active = true;
+    const params = new URLSearchParams({
+      page: String(merchantPage),
+      pageSize: String(merchantPageSize),
+    });
+    if (merchantStatus !== 'ALL') params.set('status', merchantStatus);
+    if (search) params.set('search', search);
+
+    setMerchantLoading(true);
+    setMerchantLoadError('');
+    void api
+      .get<MerchantPage>(`/admin/merchant-profiles?${params.toString()}`)
+      .then((nextPage) => {
+        if (!active) return;
+        setMerchantPageData(nextPage);
+        // 后端自动回退页码时同步前端，避免页码和实际结果不一致。
+        if (nextPage.page !== merchantPage) setMerchantPage(nextPage.page);
+      })
+      .catch((caught) => {
+        if (!active) return;
+        // 加载失败时清空旧结果，避免继续展示与当前筛选条件不符的商户。
+        setMerchantPageData(null);
+        const message = errorMessage(caught);
+        setMerchantLoadError(message);
+        onError(message);
+      })
+      .finally(() => {
+        if (active) setMerchantLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [merchantPage, merchantPageSize, merchantRefreshKey, merchantStatus, onError, search]);
 
   useEffect(() => {
     let active = true;
@@ -518,8 +564,14 @@ function MerchantsSection({
     return () => {
       active = false;
     };
-  }, [accountFilter, onError, page, pageSize, refreshKey]);
+  }, [accountFilter, onError, page, pageSize, walletRefreshKey]);
 
+  const merchants = merchantPageData?.items ?? [];
+  const merchantTotal = merchantPageData?.total ?? 0;
+  const merchantTotalPages = Math.max(
+    1,
+    Math.ceil(merchantTotal / (merchantPageData?.pageSize ?? merchantPageSize)),
+  );
   const wallets = pageData?.items ?? [];
   const total = pageData?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / (pageData?.pageSize ?? pageSize)));
@@ -541,9 +593,62 @@ function MerchantsSection({
       <section className="ledger-table-wrap">
         <div className="table-caption">
           <span>商户资料</span>
-          <span>{merchants.length} 家</span>
+          <span>共 {merchantTotal} 家</span>
         </div>
-        {merchants.length ? (
+        <div className="task-list-controls merchant-list-controls">
+          <form
+            className="merchant-search-control"
+            onSubmit={(event) => {
+              event.preventDefault();
+              setSearch(searchInput.trim());
+              setMerchantPage(1);
+            }}
+          >
+            <input
+              value={searchInput}
+              maxLength={100}
+              onChange={(event) => setSearchInput(event.target.value)}
+              placeholder="搜索公司、联系人或电话"
+              aria-label="搜索商户资料"
+            />
+            <button type="submit">查询</button>
+          </form>
+          <div className="segmented-control" aria-label="商户状态筛选">
+            {(['ALL', 'ACTIVE', 'DISABLED'] as const).map((value) => (
+              <button
+                key={value}
+                type="button"
+                className={merchantStatus === value ? 'active' : ''}
+                onClick={() => {
+                  setMerchantStatus(value);
+                  setMerchantPage(1);
+                }}
+              >
+                {value === 'ALL' ? '全部' : value === 'ACTIVE' ? '正常' : '停用'}
+              </button>
+            ))}
+          </div>
+          <label className="page-size-control">
+            <span>每页</span>
+            <select
+              value={merchantPageSize}
+              aria-label="商户资料每页数量"
+              onChange={(event) => {
+                setMerchantPageSize(Number(event.target.value));
+                setMerchantPage(1);
+              }}
+            >
+              {[10, 20, 50, 100].map((value) => (
+                <option key={value} value={value}>
+                  {value} 条
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        {merchantLoading ? (
+          <LoadingBlock />
+        ) : merchants.length ? (
           <div className="table-scroll">
             <table className="ledger-table">
               <thead>
@@ -597,7 +702,7 @@ function MerchantsSection({
                           '—'
                         )}
                       </td>
-                      <td>{merchant.tasks.length}</td>
+                      <td>{merchant._count.tasks}</td>
                       <td>
                         <StatusPill status={merchant.user.status} />
                       </td>
@@ -621,10 +726,40 @@ function MerchantsSection({
           </div>
         ) : (
           <EmptyState
-            title="尚未建立商户资料"
-            detail="点击“新增商户资料”后，再为商户充值并发布任务。"
+            title={merchantLoadError ? '商户资料加载失败' : '没有符合条件的商户'}
+            detail={
+              merchantLoadError ||
+              (merchantTotal
+                ? '请调整搜索词或状态后再查看。'
+                : '点击“新增商户资料”后，再为商户充值并发布任务。')
+            }
           />
         )}
+        <div className="list-pagination" aria-label="商户资料分页">
+          <span>
+            共 {merchantTotal} 条 · 第 {merchantPage} / {merchantTotalPages} 页
+          </span>
+          <div>
+            <button
+              className="ghost-button"
+              type="button"
+              disabled={merchantLoading || merchantPage <= 1}
+              onClick={() => setMerchantPage((current) => Math.max(1, current - 1))}
+            >
+              上一页
+            </button>
+            <button
+              className="ghost-button"
+              type="button"
+              disabled={merchantLoading || merchantPage >= merchantTotalPages}
+              onClick={() =>
+                setMerchantPage((current) => Math.min(merchantTotalPages, current + 1))
+              }
+            >
+              下一页
+            </button>
+          </div>
+        </div>
       </section>
 
       <section className="accounts-section">

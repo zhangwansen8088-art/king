@@ -45,13 +45,14 @@ export interface MerchantSummary extends MerchantProfile {
     status: 'ACTIVE' | 'DISABLED';
     wallet: Wallet | null;
   };
-  tasks: Array<{
-    id: string;
-    status: TaskStatus;
-    budgetReservedCents: string;
-    budgetSpentCents: string;
-    budgetRefundedCents: string;
-  }>;
+  _count: { tasks: number };
+}
+
+export interface MerchantPage {
+  items: MerchantSummary[];
+  total: number;
+  page: number;
+  pageSize: number;
 }
 
 export interface Task {

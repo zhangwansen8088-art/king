@@ -1385,6 +1385,39 @@ button:disabled {
   margin-top: 0;
 }
 
+.merchant-list-controls {
+  flex-wrap: wrap;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.merchant-search-control {
+  display: flex;
+  min-width: min(100%, 320px);
+  flex: 1;
+  gap: 6px;
+}
+
+.merchant-search-control input {
+  min-height: 32px;
+  flex: 1;
+  padding: 4px 10px;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  font: inherit;
+  font-size: 12px;
+}
+
+.merchant-search-control button {
+  padding: 4px 12px;
+  color: var(--paper);
+  background: var(--ink);
+  border: 1px solid var(--ink);
+  cursor: pointer;
+  font-size: 12px;
+}
+
 .page-size-control {
   display: flex;
   align-items: center;

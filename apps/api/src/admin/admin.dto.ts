@@ -117,6 +117,34 @@ export class UpdateMerchantDto {
   status?: 'ACTIVE' | 'DISABLED';
 }
 
+export class MerchantQueryDto {
+  @ApiPropertyOptional({ default: 1, minimum: 1 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page?: number = 1;
+
+  @ApiPropertyOptional({ default: 20, minimum: 1, maximum: 100 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  pageSize?: number = 20;
+
+  @ApiPropertyOptional({ enum: ['ACTIVE', 'DISABLED'], description: '按商户账号状态筛选' })
+  @IsOptional()
+  @IsIn(['ACTIVE', 'DISABLED'])
+  status?: 'ACTIVE' | 'DISABLED';
+
+  @ApiPropertyOptional({ description: '按公司名称、联系人、联系电话或账号名称模糊筛选' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  search?: string;
+}
+
 export class CreateTaskDto {
   @ApiProperty({ description: '前端生成的请求 UUID，用于防重复发布' })
   @IsUUID()

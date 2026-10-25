@@ -16,6 +16,7 @@ import type {
   AuditLogQueryDto,
   CreateMerchantDto,
   CreateTaskDto,
+  MerchantQueryDto,
   ReviewSubmissionDto,
   ReviewWithdrawalDto,
   SubmissionQueryDto,
@@ -68,21 +69,83 @@ export class AdminService {
   }
 
   async merchants() {
-    return this.prisma.merchantProfile.findMany({
-      include: {
-        user: { include: { wallet: true } },
-        tasks: {
-          select: {
-            id: true,
-            status: true,
-            budgetReservedCents: true,
-            budgetSpentCents: true,
-            budgetRefundedCents: true,
-          },
+    try {
+      return await this.prisma.merchantProfile.findMany({
+        include: {
+          user: { include: { wallet: true } },
+          _count: { select: { tasks: true } },
         },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+        // 同一创建时间下使用主键兜底，确保商户选择列表顺序稳定。
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      });
+    } catch (caught) {
+      this.logger.error(
+        '查询商户选择列表失败',
+        caught instanceof Error ? caught.stack : String(caught),
+      );
+      throw new InternalServerErrorException('商户选择列表加载失败，请稍后重试');
+    }
+  }
+
+  async merchantProfiles(query: MerchantQueryDto = {}) {
+    const pageSize = query.pageSize ?? 20;
+    const requestedPage = query.page ?? 1;
+    const keyword = query.search?.trim();
+    const where: Prisma.MerchantProfileWhereInput = {
+      ...(query.status ? { user: { status: query.status } } : {}),
+      ...(keyword
+        ? {
+            OR: [
+              { companyName: { contains: keyword, mode: 'insensitive' } },
+              { contactName: { contains: keyword, mode: 'insensitive' } },
+              { contactPhone: { contains: keyword, mode: 'insensitive' } },
+              { user: { displayName: { contains: keyword, mode: 'insensitive' } } },
+            ],
+          }
+        : {}),
+    };
+
+    try {
+      const total = await this.prisma.merchantProfile.count({ where });
+      // 筛选后数据减少时回退到最后一页，防止用户停留在空页。
+      const lastPage = Math.max(1, Math.ceil(total / pageSize));
+      const page = Math.min(requestedPage, lastPage);
+      const items = await this.prisma.merchantProfile.findMany({
+        where,
+        select: {
+          id: true,
+          userId: true,
+          companyName: true,
+          contactName: true,
+          contactPhone: true,
+          note: true,
+          createdAt: true,
+          updatedAt: true,
+          user: {
+            select: {
+              id: true,
+              username: true,
+              displayName: true,
+              status: true,
+              wallet: true,
+            },
+          },
+          // 页面只展示任务数量，避免将每家商户的全部任务明细装入列表响应。
+          _count: { select: { tasks: true } },
+        },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      });
+      return { items, total, page, pageSize };
+    } catch (caught) {
+      // 数据库错误仅写入服务端日志，返回内容不暴露 SQL、连接串等内部信息。
+      this.logger.error(
+        '查询商户资料列表失败',
+        caught instanceof Error ? caught.stack : String(caught),
+      );
+      throw new InternalServerErrorException('商户资料列表加载失败，请稍后重试');
+    }
   }
 
   async createMerchant(adminId: string, body: CreateMerchantDto) {

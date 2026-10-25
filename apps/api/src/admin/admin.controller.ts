@@ -7,6 +7,7 @@ import {
   AuditLogQueryDto,
   CreateMerchantDto,
   CreateTaskDto,
+  MerchantQueryDto,
   ReviewSubmissionDto,
   ReviewWithdrawalDto,
   SubmissionQueryDto,
@@ -33,6 +34,11 @@ export class AdminController {
   @Get('merchants')
   merchants() {
     return this.admin.merchants();
+  }
+
+  @Get('merchant-profiles')
+  merchantProfiles(@Query() query: MerchantQueryDto) {
+    return this.admin.merchantProfiles(query);
   }
 
   @Post('merchants')

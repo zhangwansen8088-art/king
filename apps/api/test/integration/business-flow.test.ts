@@ -440,6 +440,102 @@ describe('PostgreSQL 资金与任务业务闭环', () => {
     });
   });
 
+  it('商户资料按关键词和状态筛选，并返回稳定分页', async () => {
+    const actors = await seedBusinessActors();
+    await prisma.user.createMany({
+      data: [
+        {
+          username: 'merchant-pagination-active-1',
+          passwordHash: 'integration-test-only',
+          displayName: '晨光便利店账号',
+          role: 'MERCHANT',
+          status: 'ACTIVE',
+        },
+        {
+          username: 'merchant-pagination-disabled',
+          passwordHash: 'integration-test-only',
+          displayName: '海岸咖啡账号',
+          role: 'MERCHANT',
+          status: 'DISABLED',
+        },
+        {
+          username: 'merchant-pagination-active-2',
+          passwordHash: 'integration-test-only',
+          displayName: '青禾茶饮账号',
+          role: 'MERCHANT',
+          status: 'ACTIVE',
+        },
+      ],
+    });
+    const merchantUsers = await prisma.user.findMany({
+      where: {
+        username: {
+          in: [
+            'merchant-pagination-active-1',
+            'merchant-pagination-disabled',
+            'merchant-pagination-active-2',
+          ],
+        },
+      },
+    });
+    await prisma.merchantProfile.createMany({
+      data: [
+        {
+          userId: merchantUsers.find((user) => user.username === 'merchant-pagination-active-1')!
+            .id,
+          companyName: '晨光便利店',
+          contactName: '王晨',
+          contactPhone: '13900000001',
+        },
+        {
+          userId: merchantUsers.find((user) => user.username === 'merchant-pagination-disabled')!
+            .id,
+          companyName: '海岸咖啡',
+          contactName: '李海',
+          contactPhone: '13900000002',
+        },
+        {
+          userId: merchantUsers.find((user) => user.username === 'merchant-pagination-active-2')!
+            .id,
+          companyName: '青禾茶饮',
+          contactName: '陈青',
+          contactPhone: '13900000003',
+        },
+      ],
+    });
+
+    const firstPage = await admin.merchantProfiles({ page: 1, pageSize: 2 });
+    const secondPage = await admin.merchantProfiles({ page: 2, pageSize: 2 });
+    expect(firstPage).toMatchObject({ total: 4, page: 1, pageSize: 2 });
+    expect(firstPage.items).toHaveLength(2);
+    expect(firstPage.items[0]._count.tasks).toBe(0);
+    expect(secondPage).toMatchObject({ total: 4, page: 2, pageSize: 2 });
+    expect(firstPage.items[0].id).not.toBe(secondPage.items[0].id);
+
+    const searchPage = await admin.merchantProfiles({ search: '陈青' });
+    expect(searchPage).toMatchObject({ total: 1, page: 1, pageSize: 20 });
+    expect(searchPage.items[0].companyName).toBe('青禾茶饮');
+
+    const phonePage = await admin.merchantProfiles({ search: '13800000000' });
+    expect(phonePage).toMatchObject({ total: 1, page: 1, pageSize: 20 });
+    expect(phonePage.items[0].id).toBe(actors.merchantId);
+
+    const disabledPage = await admin.merchantProfiles({ status: 'DISABLED' });
+    expect(disabledPage).toMatchObject({ total: 1, page: 1, pageSize: 20 });
+    expect(disabledPage.items[0]).toMatchObject({
+      companyName: '海岸咖啡',
+      user: { status: 'DISABLED' },
+    });
+
+    const clampedPage = await admin.merchantProfiles({
+      page: 99,
+      pageSize: 2,
+      status: 'ACTIVE',
+    });
+    expect(clampedPage).toMatchObject({ total: 3, page: 2, pageSize: 2 });
+    expect(clampedPage.items).toHaveLength(1);
+  });
+
   it('提现驳回不扣款，打款只扣一次，重复审核被拒绝', async () => {
     const actors = await seedBusinessActors();
     await grantApprovedClaims(actors.child.id, actors.merchantId, 120);
