@@ -16,3 +16,6 @@ allowBuilds:
   argon2: true
   esbuild: true
   prisma: true
+
+minimumReleaseAgeExclude:
+  - '@nestjs/swagger@12.0.4'
