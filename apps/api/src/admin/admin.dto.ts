@@ -2,6 +2,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
   IsIn,
+  IsBoolean,
   IsISO8601,
   IsInt,
   IsOptional,
@@ -191,6 +192,19 @@ export class CreateTaskDto {
   @MaxLength(300)
   publicPoints!: string;
 
+  @ApiProperty({ description: '管理员确认已取得数据提供方对广告内容的确认' })
+  @IsBoolean()
+  merchantConfirmed!: boolean;
+
+  @ApiProperty({
+    description: '商户确认依据，例如确认人、渠道、时间和回执编号',
+    example: '2026-10-25 09:30 与陈经理电话确认，回执号 M-1025-01',
+  })
+  @IsString()
+  @MinLength(10)
+  @MaxLength(500)
+  merchantConfirmation!: string;
+
   @ApiProperty()
   @IsString()
   @MinLength(1)
@@ -341,6 +355,20 @@ export class ReviewSubmissionDto {
   @ApiProperty({ enum: ['APPROVED', 'REJECTED'] })
   @IsIn(['APPROVED', 'REJECTED'])
   decision!: 'APPROVED' | 'REJECTED';
+
+  @ApiProperty({
+    description: '核验依据，例如联系对象、核验渠道、时间和可追溯编号',
+    example: '2026-10-25 14:05 商户陈经理在企业微信确认，回执号 M-1025-02',
+  })
+  @IsString()
+  @MinLength(10)
+  @MaxLength(500)
+  verificationBasis!: string;
+
+  @ApiPropertyOptional({ description: '数据提供方是否已确认本次核验结果' })
+  @IsOptional()
+  @IsBoolean()
+  counterpartyConfirmed?: boolean;
 
   @ApiPropertyOptional()
   @IsOptional()

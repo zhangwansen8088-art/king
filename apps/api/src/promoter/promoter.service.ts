@@ -9,6 +9,55 @@ import { FundsService } from '../business/funds.service';
 import { PrismaService } from '../prisma/prisma.service';
 import type { SubmitProofDto, CreateWithdrawalDto } from './promoter.dto';
 
+// 只接受公网 http/https 地址，拦截内网、本机地址和带账号密码的链接。
+function isPublicHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
+    if (url.username || url.password) return false;
+
+    const hostname = url.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+    if (!hostname.includes('.') && !hostname.includes(':')) return false;
+    if (
+      hostname === 'localhost' ||
+      hostname.endsWith('.localhost') ||
+      hostname.endsWith('.local')
+    ) {
+      return false;
+    }
+
+    const octets = hostname.split('.').map(Number);
+    if (octets.length === 4 && octets.every((octet) => Number.isInteger(octet))) {
+      const [first = -1, second = -1] = octets;
+      return !(
+        first === 0 ||
+        first === 10 ||
+        first === 127 ||
+        (first === 100 && second >= 64 && second <= 127) ||
+        (first === 169 && second === 254) ||
+        (first === 172 && second >= 16 && second <= 31) ||
+        (first === 192 && second === 168) ||
+        first >= 224
+      );
+    }
+
+    if (hostname.includes(':')) {
+      return !(
+        hostname === '::1' ||
+        hostname.startsWith('fc') ||
+        hostname.startsWith('fd') ||
+        hostname.startsWith('fe8') ||
+        hostname.startsWith('fe9') ||
+        hostname.startsWith('fea') ||
+        hostname.startsWith('feb')
+      );
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 @Injectable()
 export class PromoterService {
   constructor(
@@ -127,6 +176,19 @@ export class PromoterService {
 
   async submitProof(userId: string, submissionId: string, body: SubmitProofDto) {
     return this.prisma.serializable(async (tx) => {
+      const proofText = body.proofText.trim();
+      const proofUrl = body.proofUrl?.trim() ?? '';
+      if (proofText.length < 5) {
+        throw new BadRequestException('凭证说明至少需要 5 个有效字符');
+      }
+      // 真实性声明由服务端强制校验，不能只依赖前端勾选框。
+      if (body.authenticityConfirmed !== true) {
+        throw new BadRequestException('提交前必须确认推广凭证真实有效');
+      }
+      if (proofUrl && !isPublicHttpUrl(proofUrl)) {
+        throw new BadRequestException('凭证链接必须是可公开访问的 http 或 https 地址');
+      }
+
       const submission = await tx.submission.findFirst({
         where: { id: submissionId, promoterId: userId },
         include: { task: true },
@@ -139,8 +201,8 @@ export class PromoterService {
         where: { id: submission.id },
         data: {
           status: 'SUBMITTED',
-          proofText: body.proofText.trim(),
-          proofUrl: body.proofUrl?.trim() ?? '',
+          proofText,
+          proofUrl,
           submittedAt: new Date(),
         },
       });
@@ -150,7 +212,7 @@ export class PromoterService {
         'SUBMISSION_SEND',
         'SUBMISSION',
         submission.id,
-        `提交任务“${submission.task.title}”的推广凭证`,
+        `提交任务“${submission.task.title}”的推广凭证，提交人已确认真实有效`,
       );
       return updated;
     });

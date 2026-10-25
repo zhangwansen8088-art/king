@@ -78,11 +78,13 @@ export function PromoterWorkspace({ user, onLogout }: PromoterWorkspaceProps) {
     const formData = new FormData(event.currentTarget);
     const proofText = String(formData.get('proofText') ?? '');
     const proofUrl = String(formData.get('proofUrl') ?? '').trim();
+    const authenticityConfirmed = formData.get('authenticityConfirmed') === 'true';
     setSubmittingProof(true);
     try {
       await api.post(`/promoter/submissions/${submission.id}`, {
         proofText,
         ...(proofUrl ? { proofUrl } : {}),
+        authenticityConfirmed,
       });
       await load(true);
       setNotice({ kind: 'success', text: '凭证已提交，等待管理员审核。' });
@@ -503,6 +505,10 @@ function ActiveTask({
         <Field label="凭证链接" hint="可选；可填写图片或视频的公网地址">
           <input name="proofUrl" type="url" maxLength={2000} placeholder="https://…" />
         </Field>
+        <label className="authenticity-confirmation">
+          <input name="authenticityConfirmed" type="checkbox" value="true" required />
+          <span>我确认任务由本人真实完成，凭证可核验；不接受虚假、拼接或重复使用的内容。</span>
+        </label>
         <button className="primary-button" type="submit" disabled={submitting}>
           {submitting ? '正在提交…' : '提交凭证并等待审核'}
         </button>

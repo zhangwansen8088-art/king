@@ -2269,6 +2269,25 @@ button:disabled {
   justify-self: start;
 }
 
+.authenticity-confirmation {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 13px 15px;
+  color: var(--ink-soft);
+  line-height: 1.65;
+  background: var(--mist);
+  border-left: 3px solid var(--work);
+}
+
+.authenticity-confirmation input {
+  width: 16px;
+  height: 16px;
+  margin-top: 3px;
+  accent-color: var(--work);
+}
+
 .waiting-task {
   padding: clamp(28px, 4vw, 50px);
   border-top: 4px solid var(--brass);

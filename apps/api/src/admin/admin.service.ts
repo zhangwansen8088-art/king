@@ -304,9 +304,17 @@ export class AdminService {
   async createTask(adminId: string, body: CreateTaskDto) {
     const startsAt = new Date(body.startsAt);
     const endsAt = new Date(body.endsAt);
+    const merchantConfirmation = body.merchantConfirmation.trim();
     if (endsAt <= startsAt) throw new BadRequestException('任务结束时间必须晚于开始时间');
     if (body.rewardType === 'WELFARE' && !body.welfareClaimRule?.trim()) {
       throw new BadRequestException('福利任务必须填写领取对象、方式和数量');
+    }
+    // 未经数据提供方确认、没有可追溯依据的内容不得进入推广系统。
+    if (!body.merchantConfirmed) {
+      throw new BadRequestException('发布前必须取得数据提供方对广告内容的确认');
+    }
+    if (merchantConfirmation.length < 10) {
+      throw new BadRequestException('商户确认依据至少需要 10 个有效字符');
     }
 
     const pricing = priceTask(BigInt(body.adFeeCents), body.rewardType, body.maxClaims);
@@ -369,7 +377,7 @@ export class AdminService {
         'TASK_CREATE',
         'TASK',
         task.id,
-        `为商户“${merchant.companyName}”发布任务“${task.title}”，冻结预算 ${pricing.maximumBudgetCents} 分`,
+        `为商户“${merchant.companyName}”发布任务“${task.title}”，冻结预算 ${pricing.maximumBudgetCents} 分；商户确认依据：${merchantConfirmation}`,
       );
       return task;
     });
@@ -453,6 +461,14 @@ export class AdminService {
   }
 
   async reviewSubmission(adminId: string, submissionId: string, body: ReviewSubmissionDto) {
+    const verificationBasis = body.verificationBasis.trim();
+    if (verificationBasis.length < 10) {
+      throw new BadRequestException('核验依据至少需要 10 个有效字符');
+    }
+    if (body.decision === 'APPROVED' && body.counterpartyConfirmed !== true) {
+      throw new BadRequestException('审核通过前必须取得数据提供方确认');
+    }
+
     return this.prisma.serializable(async (tx) => {
       const submission = await tx.submission.findUnique({
         where: { id: submissionId },
@@ -465,7 +481,14 @@ export class AdminService {
       if (submission.status !== 'SUBMITTED') {
         throw new BadRequestException('该提交已经处理，不能重复审核');
       }
-      const note = body.note?.trim() ?? '';
+      // 把核验依据写入审核记录，确保结算结果可追溯。
+      const extraNote = body.note?.trim() ?? '';
+      const confirmationText = body.counterpartyConfirmed ? '数据提供方已确认' : '数据提供方未确认';
+      const note = [
+        `核验依据：${verificationBasis}`,
+        confirmationText,
+        ...(extraNote ? [`备注：${extraNote}`] : []),
+      ].join('；');
       await tx.submission.update({
         where: { id: submission.id },
         data: {
@@ -558,8 +581,8 @@ export class AdminService {
         'SUBMISSION',
         submission.id,
         body.decision === 'APPROVED'
-          ? '审核通过，结算预算并发放佣金和真实存在的一级返佣'
-          : '审核驳回，退回保证金，不扣预算、不发佣金',
+          ? `数据提供方已确认并审核通过；核验依据：${verificationBasis}`
+          : `审核驳回，退回保证金，不扣预算、不发佣金；核验依据：${verificationBasis}`,
       );
       return tx.submission.findUnique({ where: { id: submission.id } });
     });

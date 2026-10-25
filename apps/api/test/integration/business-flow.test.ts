@@ -103,6 +103,8 @@ function taskDraft(merchantId: string, overrides: Record<string, unknown> = {}) 
     description: '验证领取、提交、审核、结算和退款闭环',
     adContent: '测试广告内容',
     publicPoints: '按任务说明完成展示',
+    merchantConfirmed: true,
+    merchantConfirmation: '2026-10-25 09:30 与测试联系人电话确认，回执号 TEST-1025',
     region: '上海',
     adFeeCents: '100000',
     rewardType: 'NORMAL' as const,
@@ -194,10 +196,13 @@ describe('PostgreSQL 资金与任务业务闭环', () => {
     await promoter.submitProof(actors.child.id, submission.id, {
       proofText: '已完成展示并上传现场凭证',
       proofUrl: 'https://example.com/integration-proof',
+      authenticityConfirmed: true,
     });
     await admin.reviewSubmission(actors.adminUser.id, submission.id, {
       decision: 'APPROVED',
       note: '集成测试审核通过',
+      verificationBasis: '2026-10-25 14:05 测试联系人电话确认，回执号 TEST-REVIEW-01',
+      counterpartyConfirmed: true,
     });
 
     const childWallet = await prisma.wallet.findUniqueOrThrow({
@@ -214,6 +219,8 @@ describe('PostgreSQL 资金与任务业务闭环', () => {
     await expect(
       admin.reviewSubmission(actors.adminUser.id, submission.id, {
         decision: 'APPROVED',
+        verificationBasis: '重复审核测试，回执号 TEST-REVIEW-02',
+        counterpartyConfirmed: true,
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(await prisma.ledgerEntry.count()).toBe(ledgerCount);
@@ -227,6 +234,111 @@ describe('PostgreSQL 资金与任务业务闭环', () => {
     expect(merchantWallet.frozenCents).toBe(0n);
     expect(closedTask.budgetSpentCents).toBe(384n);
     expect(closedTask.budgetRefundedCents).toBe(384n);
+  });
+
+  it('未取得商户确认和提交人声明时，禁止创建任务或提交凭证', async () => {
+    const actors = await seedBusinessActors();
+    const draft = taskDraft(actors.merchantId);
+
+    await expect(
+      admin.createTask(actors.adminUser.id, {
+        ...draft,
+        merchantConfirmed: false,
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      admin.createTask(actors.adminUser.id, {
+        ...draft,
+        merchantConfirmation: '   ',
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(await prisma.task.count()).toBe(0);
+    expect(await prisma.ledgerEntry.count({ where: { type: 'TASK_BUDGET_FREEZE' } })).toBe(0);
+
+    const task = await admin.createTask(actors.adminUser.id, draft);
+    const taskAudit = await prisma.auditLog.findFirstOrThrow({
+      where: { action: 'TASK_CREATE', entityId: task.id },
+    });
+    expect(taskAudit.detail).toContain(draft.merchantConfirmation);
+
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0);
+    const submission = await promoter.claimRandom(actors.child.id);
+    random.mockRestore();
+
+    await expect(
+      promoter.submitProof(actors.child.id, submission.id, {
+        proofText: '提交人未确认的测试凭证',
+        authenticityConfirmed: false,
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    const unchanged = await prisma.submission.findUniqueOrThrow({
+      where: { id: submission.id },
+    });
+    expect(unchanged.status).toBe('CLAIMED');
+    expect(unchanged.submittedAt).toBeNull();
+  });
+
+  it('凭证地址拒绝内网，审核通过必须有对方确认和可追溯依据', async () => {
+    const actors = await seedBusinessActors();
+    await admin.createTask(actors.adminUser.id, taskDraft(actors.merchantId));
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0);
+    const submission = await promoter.claimRandom(actors.child.id);
+    random.mockRestore();
+
+    for (const proofUrl of [
+      'http://127.0.0.1/proof',
+      'http://192.168.1.10/proof',
+      'https://user:password@example.com/proof',
+    ]) {
+      await expect(
+        promoter.submitProof(actors.child.id, submission.id, {
+          proofText: '提交公网凭证地址测试',
+          proofUrl,
+          authenticityConfirmed: true,
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    }
+
+    await promoter.submitProof(actors.child.id, submission.id, {
+      proofText: '提交可供商户核验的公网凭证',
+      proofUrl: 'https://example.com/proof',
+      authenticityConfirmed: true,
+    });
+    const ledgerCount = await prisma.ledgerEntry.count();
+
+    await expect(
+      admin.reviewSubmission(actors.adminUser.id, submission.id, {
+        decision: 'APPROVED',
+        verificationBasis: '2026-10-25 15:00 未取得商户确认，仅做负向测试',
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      admin.reviewSubmission(actors.adminUser.id, submission.id, {
+        decision: 'APPROVED',
+        verificationBasis: '短依据',
+        counterpartyConfirmed: true,
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(await prisma.ledgerEntry.count()).toBe(ledgerCount);
+    expect(
+      (await prisma.submission.findUniqueOrThrow({ where: { id: submission.id } })).status,
+    ).toBe('SUBMITTED');
+
+    const verificationBasis = '2026-10-25 15:05 商户陈经理在企业微信确认，回执号 TEST-REVIEW-03';
+    await admin.reviewSubmission(actors.adminUser.id, submission.id, {
+      decision: 'APPROVED',
+      verificationBasis,
+      counterpartyConfirmed: true,
+    });
+    const reviewed = await prisma.submission.findUniqueOrThrow({
+      where: { id: submission.id },
+    });
+    expect(reviewed.reviewNote).toContain(`核验依据：${verificationBasis}`);
+    expect(reviewed.reviewNote).toContain('数据提供方已确认');
+    const reviewAudit = await prisma.auditLog.findFirstOrThrow({
+      where: { action: 'SUBMISSION_APPROVE', entityId: submission.id },
+    });
+    expect(reviewAudit.detail).toContain(verificationBasis);
   });
 
   it('任务列表按状态筛选，并返回稳定分页', async () => {
@@ -332,10 +444,12 @@ describe('PostgreSQL 资金与任务业务闭环', () => {
     random.mockRestore();
     await promoter.submitProof(actors.child.id, submission.id, {
       proofText: '提交待驳回的测试凭证',
+      authenticityConfirmed: true,
     });
     await admin.reviewSubmission(actors.adminUser.id, submission.id, {
       decision: 'REJECTED',
       note: '凭证不符合任务要求',
+      verificationBasis: '2026-10-25 14:10 核验发现凭证未体现公开要点',
     });
 
     const childWallet = await prisma.wallet.findUniqueOrThrow({

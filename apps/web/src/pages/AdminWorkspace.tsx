@@ -1879,6 +1879,8 @@ function TaskModal({
     description: '',
     adContent: '',
     publicPoints: '',
+    merchantConfirmed: false,
+    merchantConfirmation: '',
     region: '',
     adFee: '',
     rewardType: 'NORMAL' as 'NORMAL' | 'WELFARE',
@@ -1973,6 +1975,10 @@ function TaskModal({
       onError('广告费必须是有效金额，最多保留两位小数。');
       return;
     }
+    if (!form.merchantConfirmed || form.merchantConfirmation.trim().length < 10) {
+      onError('发布前必须取得商户确认，并填写至少 10 个字符的确认依据。');
+      return;
+    }
     setSubmitting(true);
     try {
       await api.post('/admin/tasks', {
@@ -1982,6 +1988,8 @@ function TaskModal({
         ...(form.description ? { description: form.description } : {}),
         adContent: form.adContent,
         publicPoints: form.publicPoints,
+        merchantConfirmed: form.merchantConfirmed,
+        merchantConfirmation: form.merchantConfirmation.trim(),
         region: form.region,
         adFeeCents,
         rewardType: form.rewardType,
@@ -2120,6 +2128,17 @@ function TaskModal({
               placeholder="凭证需要体现的关键信息"
             />
           </Field>
+          <Field label="商户确认依据" hint="必须记录确认人、渠道、时间和回执编号等可追溯信息" wide>
+            <textarea
+              required
+              minLength={10}
+              maxLength={500}
+              rows={2}
+              value={form.merchantConfirmation}
+              onChange={(event) => setForm({ ...form, merchantConfirmation: event.target.value })}
+              placeholder="例如：2026-10-25 09:30 与陈经理电话确认，回执号 M-1025-01"
+            />
+          </Field>
           <Field label="内部说明" wide>
             <textarea
               maxLength={1000}
@@ -2191,6 +2210,17 @@ function TaskModal({
             </Field>
           ) : null}
         </div>
+        <label className="authenticity-confirmation">
+          <input
+            type="checkbox"
+            checked={form.merchantConfirmed}
+            onChange={(event) => setForm({ ...form, merchantConfirmed: event.target.checked })}
+            required
+          />
+          <span>
+            我确认商户已核验广告内容、公开要点和预算，以上数据不包含虚构或未经授权的信息。
+          </span>
+        </label>
         {pricing ? (
           <div className="pricing-preview">
             <div>
@@ -2214,7 +2244,12 @@ function TaskModal({
           <button
             className="primary-button"
             type="submit"
-            disabled={submitting || !form.merchantId}
+            disabled={
+              submitting ||
+              !form.merchantId ||
+              !form.merchantConfirmed ||
+              form.merchantConfirmation.trim().length < 10
+            }
           >
             {submitting ? '正在发布…' : '发布并冻结预算'}
           </button>
@@ -2236,16 +2271,32 @@ function ReviewModal({
   onError: (message: string) => void;
 }) {
   const [note, setNote] = useState('');
+  const [verificationBasis, setVerificationBasis] = useState('');
+  const [counterpartyConfirmed, setCounterpartyConfirmed] = useState(false);
   const [submitting, setSubmitting] = useState<'APPROVED' | 'REJECTED' | null>(null);
 
-  useEffect(() => setNote(''), [submission]);
+  useEffect(() => {
+    setNote('');
+    setVerificationBasis('');
+    setCounterpartyConfirmed(false);
+  }, [submission]);
 
   async function review(decision: 'APPROVED' | 'REJECTED') {
     if (!submission) return;
+    if (verificationBasis.trim().length < 10) {
+      onError('请填写至少 10 个字符的核验依据。');
+      return;
+    }
+    if (decision === 'APPROVED' && !counterpartyConfirmed) {
+      onError('通过前必须确认数据提供方已核验结果。');
+      return;
+    }
     setSubmitting(decision);
     try {
       await api.post(`/admin/submissions/${submission.id}/review`, {
         decision,
+        verificationBasis: verificationBasis.trim(),
+        counterpartyConfirmed,
         ...(note.trim() ? { note: note.trim() } : {}),
       });
       await onSaved(decision === 'APPROVED');
@@ -2287,6 +2338,29 @@ function ReviewModal({
               ，从任务预算扣款并发放佣金与一级返佣。
             </p>
           </div>
+          <Field
+            label="核验依据"
+            hint="记录联系对象、核验渠道、时间和可追溯编号，不能只写“已核验”"
+            wide
+          >
+            <textarea
+              required
+              minLength={10}
+              maxLength={500}
+              rows={3}
+              value={verificationBasis}
+              onChange={(event) => setVerificationBasis(event.target.value)}
+              placeholder="例如：2026-10-25 14:05 商户陈经理在企业微信确认，回执号 M-1025-02"
+            />
+          </Field>
+          <label className="authenticity-confirmation">
+            <input
+              type="checkbox"
+              checked={counterpartyConfirmed}
+              onChange={(event) => setCounterpartyConfirmed(event.target.checked)}
+            />
+            <span>数据提供方已核验本次凭证；未确认时只能驳回，不能结算付款。</span>
+          </label>
           <Field label="审核备注" hint="驳回时建议写明需要补充的凭证">
             <textarea
               rows={3}
@@ -2300,7 +2374,7 @@ function ReviewModal({
             <button
               className="danger-outline-button"
               type="button"
-              disabled={Boolean(submitting)}
+              disabled={Boolean(submitting) || verificationBasis.trim().length < 10}
               onClick={() => void review('REJECTED')}
             >
               {submitting === 'REJECTED' ? '正在驳回…' : '驳回并退保证金'}
@@ -2308,7 +2382,11 @@ function ReviewModal({
             <button
               className="primary-button"
               type="button"
-              disabled={Boolean(submitting)}
+              disabled={
+                Boolean(submitting) ||
+                verificationBasis.trim().length < 10 ||
+                !counterpartyConfirmed
+              }
               onClick={() => void review('APPROVED')}
             >
               {submitting === 'APPROVED' ? '正在结算…' : '通过并结算'}
