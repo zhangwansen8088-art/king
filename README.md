@@ -48,6 +48,16 @@ CI=true pnpm test
 CI=true pnpm build
 ```
 
+数据库业务闭环测试只能连接名称以 `_test` 结尾的独立 PostgreSQL 数据库：
+
+```bash
+export TEST_DATABASE_URL='postgresql://max_promotion:test-password@127.0.0.1:5432/max_promotion_test?schema=public'
+DATABASE_URL="$TEST_DATABASE_URL" pnpm --filter @max-promotion/api prisma:migrate:deploy
+pnpm test:integration
+```
+
+测试会清空 `TEST_DATABASE_URL` 指向的数据库；代码带有数据库名后缀保护，不能将其指向正式库。GitHub Actions 会自动启动临时 PostgreSQL 执行同一套验收。阶段安排见 [实施路线图](docs/roadmap.md)。
+
 ## Docker Compose
 
 生产配置至少需要修改数据库密码、JWT 密钥、正式域名和 Cookie 安全开关。具体步骤见 [部署说明](docs/deployment.md)。

@@ -16,6 +16,7 @@
     "typecheck": "pnpm --filter @max-promotion/contracts build && pnpm -r typecheck",
     "lint": "pnpm -r lint",
     "test": "pnpm --filter @max-promotion/contracts build && pnpm -r test",
+    "test:integration": "pnpm --filter @max-promotion/contracts build && pnpm --filter @max-promotion/api test:integration",
     "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm build",
     "db:generate": "pnpm --filter @max-promotion/api prisma:generate",
     "db:migrate": "pnpm --filter @max-promotion/api prisma:migrate",
