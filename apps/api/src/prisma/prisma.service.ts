@@ -1,4 +1,9 @@
-import { BadRequestException, Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import {
+  Injectable,
+  OnModuleDestroy,
+  OnModuleInit,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { Prisma, PrismaClient } from '../generated/prisma/client';
 import { createDatabaseAdapter } from './database-adapter';
 
@@ -18,7 +23,8 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
 
   async serializable<T>(
     work: (tx: Prisma.TransactionClient) => Promise<T>,
-    onConflictExhausted: () => Error = () => new BadRequestException('事务冲突，请稍后重试'),
+    onConflictExhausted: () => Error = () =>
+      new ServiceUnavailableException('系统繁忙，请稍后重试'),
   ): Promise<T> {
     const maxAttempts = 5;
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
