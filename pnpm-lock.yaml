@@ -78,7 +78,7 @@ importers:
         specifier: ^5.0.3
         version: 5.0.6
       '@types/node':
-        specifier: ^24.5.2
+        specifier: ^24.19.2
         version: 24.19.2
       prisma:
         specifier: 6.19.3
@@ -109,7 +109,7 @@ importers:
         specifier: ^4.1.14
         version: 4.3.3(vite@7.3.7(@types/node@24.19.2)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.51.2)(tsx@4.23.15))
       '@types/node':
-        specifier: ^24.5.2
+        specifier: ^24.19.2
         version: 24.19.2
       '@types/react':
         specifier: ^19.1.16
