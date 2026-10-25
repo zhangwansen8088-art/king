@@ -73,7 +73,6 @@ function safeExternalUrl(value: string): string | null {
 export function AdminWorkspace({ user, onLogout }: AdminWorkspaceProps) {
   const [section, setSection] = useState<AdminSection>('overview');
   const [dashboard, setDashboard] = useState<AdminDashboard | null>(null);
-  const [merchants, setMerchants] = useState<MerchantSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [merchantRefreshKey, setMerchantRefreshKey] = useState(0);
   const [walletRefreshKey, setWalletRefreshKey] = useState(0);
@@ -101,12 +100,8 @@ export function AdminWorkspace({ user, onLogout }: AdminWorkspaceProps) {
           // 商户列表由子组件按分页条件单独请求，这里只刷新顶部统计。
           setDashboard(await api.get<AdminDashboard>('/admin/dashboard'));
         } else if (section === 'tasks') {
-          const [nextDashboard, nextMerchants] = await Promise.all([
-            api.get<AdminDashboard>('/admin/dashboard'),
-            api.get<MerchantSummary[]>('/admin/merchants'),
-          ]);
-          setDashboard(nextDashboard);
-          setMerchants(nextMerchants);
+          // 发布表单按关键词远程读取商户，不再一次性加载完整商户列表。
+          setDashboard(await api.get<AdminDashboard>('/admin/dashboard'));
         } else if (section === 'reviews') {
           setDashboard(await api.get<AdminDashboard>('/admin/dashboard'));
         } else if (section === 'withdrawals') {
@@ -324,7 +319,6 @@ export function AdminWorkspace({ user, onLogout }: AdminWorkspaceProps) {
 
       <TaskModal
         open={taskModalOpen}
-        merchants={merchants}
         onClose={() => setTaskModalOpen(false)}
         onSaved={async () => {
           setTaskModalOpen(false);
@@ -489,6 +483,7 @@ function MerchantsSection({
   const [search, setSearch] = useState('');
   const [merchantLoading, setMerchantLoading] = useState(true);
   const [merchantLoadError, setMerchantLoadError] = useState('');
+  const [exporting, setExporting] = useState(false);
   const [accountFilter, setAccountFilter] = useState<'ALL' | 'MERCHANT' | 'PROMOTER'>('MERCHANT');
   const [pageData, setPageData] = useState<AdminWalletPage | null>(null);
   const [page, setPage] = useState(1);
@@ -576,6 +571,28 @@ function MerchantsSection({
   const total = pageData?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / (pageData?.pageSize ?? pageSize)));
 
+  async function exportMerchants() {
+    const params = new URLSearchParams();
+    if (merchantStatus !== 'ALL') params.set('status', merchantStatus);
+    if (search) params.set('search', search);
+
+    setExporting(true);
+    try {
+      const result = await api.download(`/admin/merchant-profiles/export?${params.toString()}`);
+      const objectUrl = URL.createObjectURL(result.blob);
+      const anchor = document.createElement('a');
+      anchor.href = objectUrl;
+      anchor.download = result.filename;
+      anchor.click();
+      // 延迟释放临时地址，确保浏览器已经开始下载。
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+    } catch (caught) {
+      onError(errorMessage(caught));
+    } finally {
+      setExporting(false);
+    }
+  }
+
   return (
     <div className="stack-section">
       <SectionHeading
@@ -645,6 +662,14 @@ function MerchantsSection({
               ))}
             </select>
           </label>
+          <button
+            className="ghost-button merchant-export-button"
+            type="button"
+            disabled={exporting}
+            onClick={() => void exportMerchants()}
+          >
+            {exporting ? '正在导出…' : '导出当前筛选'}
+          </button>
         </div>
         {merchantLoading ? (
           <LoadingBlock />
@@ -1833,13 +1858,11 @@ function WalletModal({
 
 function TaskModal({
   open,
-  merchants,
   onClose,
   onSaved,
   onError,
 }: {
   open: boolean;
-  merchants: MerchantSummary[];
   onClose: () => void;
   onSaved: () => Promise<void>;
   onError: (message: string) => void;
@@ -1865,17 +1888,64 @@ function TaskModal({
     endsAt: initialTimes.end,
   });
   const [submitting, setSubmitting] = useState(false);
+  const [merchantSearchInput, setMerchantSearchInput] = useState('');
+  const [merchantSearch, setMerchantSearch] = useState('');
+  const [merchantOptions, setMerchantOptions] = useState<MerchantSummary[]>([]);
+  const [selectedMerchant, setSelectedMerchant] = useState<MerchantSummary | null>(null);
+  const [merchantLoading, setMerchantLoading] = useState(false);
+  const [merchantLoadError, setMerchantLoadError] = useState('');
 
   useEffect(() => {
     if (!open) return;
-    const firstMerchant = merchants.find(
-      (merchant) => merchant.user.status === 'ACTIVE' && merchant.user.wallet,
-    );
-    setForm((current) => ({
-      ...current,
-      merchantId: firstMerchant?.id ?? '',
-    }));
-  }, [open, merchants]);
+    setMerchantSearchInput('');
+    setMerchantSearch('');
+    setSelectedMerchant(null);
+    setMerchantOptions([]);
+    setMerchantLoadError('');
+    setForm((current) => ({ ...current, merchantId: '' }));
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const timeout = window.setTimeout(() => {
+      // 输入停顿后再查询，避免每按一个字符都请求服务器。
+      setMerchantSearch(merchantSearchInput.trim());
+    }, 300);
+    return () => window.clearTimeout(timeout);
+  }, [merchantSearchInput, open]);
+
+  useEffect(() => {
+    if (!open) return;
+    let active = true;
+    const params = new URLSearchParams({
+      page: '1',
+      pageSize: '20',
+      status: 'ACTIVE',
+    });
+    if (merchantSearch) params.set('search', merchantSearch);
+
+    setMerchantLoading(true);
+    setMerchantLoadError('');
+    void api
+      .get<MerchantPage>(`/admin/merchant-profiles?${params.toString()}`)
+      .then((result) => {
+        if (!active) return;
+        setMerchantOptions(result.items);
+      })
+      .catch((caught) => {
+        if (!active) return;
+        // 保持已选商户，但清空当前搜索结果，避免误选过期数据。
+        setMerchantOptions([]);
+        setMerchantLoadError(errorMessage(caught));
+      })
+      .finally(() => {
+        if (active) setMerchantLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [merchantSearch, open]);
 
   const pricing = useMemo(() => {
     const cents = yuanToCents(form.adFee);
@@ -1894,6 +1964,10 @@ function TaskModal({
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!form.merchantId) {
+      onError('请先选择归属商户。');
+      return;
+    }
     const adFeeCents = yuanToCents(form.adFee);
     if (!adFeeCents) {
       onError('广告费必须是有效金额，最多保留两位小数。');
@@ -1932,33 +2006,79 @@ function TaskModal({
       onClose={onClose}
     >
       <form className="modal-form" onSubmit={submit}>
-        {!merchants.length ? (
-          <div className="modal-warning danger-warning">
-            <strong>还没有商户资料</strong>
-            <p>请先在“商户与资金”中新增商户并充值，再发布任务。</p>
-          </div>
-        ) : null}
         <div className="form-grid">
-          <Field label="归属商户" wide>
-            <select
-              required
-              value={form.merchantId}
-              onChange={(event) => setForm({ ...form, merchantId: event.target.value })}
-            >
-              <option value="">选择商户资料</option>
-              {merchants.map((merchant) => (
-                <option
-                  key={merchant.id}
-                  value={merchant.id}
-                  disabled={merchant.user.status !== 'ACTIVE' || !merchant.user.wallet}
-                >
-                  {merchant.companyName}
-                  {merchant.user.wallet
-                    ? ` · 可用 ${centsToYuanInput(merchant.user.wallet.availableCents)} 元`
-                    : ' · 未开通钱包'}
-                </option>
-              ))}
-            </select>
+          <Field label="归属商户" hint="输入公司、联系人或电话远程搜索，最多显示 20 项" wide>
+            <div className="merchant-remote-picker">
+              <input
+                type="search"
+                value={merchantSearchInput}
+                maxLength={100}
+                onChange={(event) => setMerchantSearchInput(event.target.value)}
+                placeholder="输入关键词搜索正常商户"
+                aria-label="搜索可发布任务的商户"
+              />
+              {selectedMerchant ? (
+                <div className="merchant-selected">
+                  <span>
+                    <strong>{selectedMerchant.companyName}</strong>
+                    {selectedMerchant.user.wallet
+                      ? ` · 可用 ${centsToYuanInput(selectedMerchant.user.wallet.availableCents)} 元`
+                      : ' · 未开通钱包'}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedMerchant(null);
+                      setForm((current) => ({ ...current, merchantId: '' }));
+                    }}
+                  >
+                    更换
+                  </button>
+                </div>
+              ) : null}
+              {merchantLoading ? (
+                <span className="merchant-search-status" aria-live="polite">
+                  正在查询商户…
+                </span>
+              ) : merchantLoadError ? (
+                <span className="merchant-search-error" role="alert">
+                  {merchantLoadError}
+                </span>
+              ) : merchantOptions.length ? (
+                <div className="merchant-option-list" role="listbox" aria-label="商户搜索结果">
+                  {merchantOptions.map((merchant) => (
+                    <button
+                      key={merchant.id}
+                      type="button"
+                      role="option"
+                      aria-selected={form.merchantId === merchant.id}
+                      disabled={!merchant.user.wallet}
+                      onClick={() => {
+                        setSelectedMerchant(merchant);
+                        setForm((current) => ({ ...current, merchantId: merchant.id }));
+                      }}
+                    >
+                      <span>
+                        <strong>{merchant.companyName}</strong>
+                        <small>
+                          {merchant.contactName}
+                          {merchant.contactPhone ? ` · ${merchant.contactPhone}` : ''}
+                        </small>
+                      </span>
+                      <span>
+                        {merchant.user.wallet
+                          ? `可用 ${centsToYuanInput(merchant.user.wallet.availableCents)} 元`
+                          : '未开通钱包'}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <span className="merchant-search-status">
+                  {merchantSearch ? '没有匹配的正常商户' : '暂无可发布任务的商户'}
+                </span>
+              )}
+            </div>
           </Field>
           <Field label="任务名称">
             <input
@@ -2094,7 +2214,7 @@ function TaskModal({
           <button
             className="primary-button"
             type="submit"
-            disabled={submitting || !merchants.length}
+            disabled={submitting || !form.merchantId}
           >
             {submitting ? '正在发布…' : '发布并冻结预算'}
           </button>

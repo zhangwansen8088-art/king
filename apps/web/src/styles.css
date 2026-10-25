@@ -1418,6 +1418,105 @@ button:disabled {
   font-size: 12px;
 }
 
+.merchant-export-button {
+  white-space: nowrap;
+}
+
+.merchant-remote-picker {
+  display: grid;
+  gap: 8px;
+}
+
+.merchant-option-list {
+  display: grid;
+  max-height: 250px;
+  overflow-y: auto;
+  background: var(--white);
+  border: 1px solid var(--line);
+}
+
+.merchant-option-list button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 12px;
+  color: var(--ink);
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+  text-align: left;
+}
+
+.merchant-option-list button:last-child {
+  border-bottom: 0;
+}
+
+.merchant-option-list button:hover:not(:disabled),
+.merchant-option-list button[aria-selected='true'] {
+  background: var(--work-pale);
+}
+
+.merchant-option-list button:disabled {
+  color: var(--ink-faint);
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.merchant-option-list button > span {
+  display: grid;
+  gap: 2px;
+  font-size: 13px;
+}
+
+.merchant-option-list button > span:last-child {
+  flex: 0 0 auto;
+  color: var(--ink-faint);
+  font-size: 12px;
+}
+
+.merchant-option-list small {
+  color: var(--ink-faint);
+  font-size: 11px;
+}
+
+.merchant-selected {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 11px;
+  color: var(--work-dark);
+  background: var(--work-pale);
+  border-left: 3px solid var(--work);
+  font-size: 13px;
+}
+
+.merchant-selected button {
+  flex: 0 0 auto;
+  padding: 2px 0;
+  color: var(--work-dark);
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid currentColor;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.merchant-search-status,
+.merchant-search-error {
+  font-size: 12px;
+}
+
+.merchant-search-status {
+  color: var(--ink-faint);
+}
+
+.merchant-search-error {
+  color: #8b3029;
+}
+
 .page-size-control {
   display: flex;
   align-items: center;
@@ -2799,6 +2898,12 @@ button:disabled {
 
   .field-wide {
     grid-column: auto;
+  }
+
+  .merchant-option-list button,
+  .merchant-selected {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .modal-actions {

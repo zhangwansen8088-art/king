@@ -516,6 +516,12 @@ describe('PostgreSQL 资金与任务业务闭环', () => {
     expect(searchPage).toMatchObject({ total: 1, page: 1, pageSize: 20 });
     expect(searchPage.items[0].companyName).toBe('青禾茶饮');
 
+    const usernamePage = await admin.merchantProfiles({
+      search: 'merchant-pagination-active-2',
+    });
+    expect(usernamePage).toMatchObject({ total: 1, page: 1, pageSize: 20 });
+    expect(usernamePage.items[0].companyName).toBe('青禾茶饮');
+
     const phonePage = await admin.merchantProfiles({ search: '13800000000' });
     expect(phonePage).toMatchObject({ total: 1, page: 1, pageSize: 20 });
     expect(phonePage.items[0].id).toBe(actors.merchantId);
@@ -534,6 +540,42 @@ describe('PostgreSQL 资金与任务业务闭环', () => {
     });
     expect(clampedPage).toMatchObject({ total: 3, page: 2, pageSize: 2 });
     expect(clampedPage.items).toHaveLength(1);
+  });
+
+  it('商户资料 CSV 按筛选条件导出并防止公式注入', async () => {
+    const actors = await seedBusinessActors();
+    const activeMerchant = await admin.createMerchant(actors.adminUser.id, {
+      companyName: '=HYPERLINK("https://example.com","危险链接")',
+      displayName: 'CSV 导出启用商户账号',
+      contactName: '=导出筛选联系人',
+      contactPhone: '+8613800000000',
+      note: '@SUM(1,1)',
+    });
+    const disabledMerchant = await admin.createMerchant(actors.adminUser.id, {
+      companyName: '停用导出商户',
+      displayName: 'CSV 导出停用商户账号',
+      contactName: '+导出筛选联系人',
+    });
+    if (!activeMerchant.merchantProfile || !disabledMerchant.merchantProfile) {
+      throw new Error('CSV 测试商户资料创建失败');
+    }
+    await admin.updateMerchant(actors.adminUser.id, disabledMerchant.merchantProfile.id, {
+      status: 'DISABLED',
+    });
+
+    const csv = await admin.merchantProfilesCsv({
+      status: 'ACTIVE',
+      search: '导出筛选联系人',
+    });
+
+    expect(csv.startsWith('\uFEFF')).toBe(true);
+    expect(csv).toContain('"商户名称","账号名称","账号显示名","联系人","联系电话"');
+    expect(csv).toContain('"\'=HYPERLINK(""https://example.com"",""危险链接"")"');
+    expect(csv).toContain('"\'=导出筛选联系人"');
+    expect(csv).toContain('"\'+8613800000000"');
+    expect(csv).toContain('"\'@SUM(1,1)"');
+    expect(csv).not.toContain('停用导出商户');
+    expect(csv.split('\r\n')).toHaveLength(3);
   });
 
   it('提现驳回不扣款，打款只扣一次，重复审核被拒绝', async () => {

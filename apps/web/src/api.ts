@@ -50,6 +50,19 @@ async function parseError(response: Response): Promise<ApiError> {
   return new ApiError(message, response.status);
 }
 
+function downloadFilename(response: Response): string {
+  const disposition = response.headers.get('Content-Disposition') ?? '';
+  const encoded = /filename\*=UTF-8''([^;]+)/i.exec(disposition)?.[1];
+  if (encoded) {
+    try {
+      return decodeURIComponent(encoded);
+    } catch {
+      // 文件名编码异常时继续使用普通 filename 或中文默认值。
+    }
+  }
+  return /filename="?([^";]+)"?/i.exec(disposition)?.[1] ?? '导出文件.csv';
+}
+
 async function rawRequest<T>(
   path: string,
   init: RequestInit = {},
@@ -139,8 +152,32 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
   }
 }
 
+export async function downloadRequest(path: string): Promise<{
+  blob: Blob;
+  filename: string;
+}> {
+  const request = () => {
+    const headers = new Headers();
+    if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`);
+    return fetch(`/api${path}`, { headers, credentials: 'include' });
+  };
+
+  let response = await request();
+  if (response.status === 401) {
+    const session = await refreshRequest();
+    if (session) response = await request();
+  }
+  if (!response.ok) throw await parseError(response);
+
+  return {
+    blob: await response.blob(),
+    filename: downloadFilename(response),
+  };
+}
+
 export const api = {
   get: <T>(path: string) => apiRequest<T>(path),
+  download: downloadRequest,
   post: <T>(path: string, body?: unknown) =>
     apiRequest<T>(path, {
       method: 'POST',

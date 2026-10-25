@@ -1,5 +1,16 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  ParseUUIDPipe,
+  Patch,
+  Post,
+  Query,
+  Res,
+} from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import type { Response } from 'express';
 import type { AuthUser } from '../common/auth.types';
 import { CurrentUser, Roles } from '../common/decorators';
 import {
@@ -7,6 +18,7 @@ import {
   AuditLogQueryDto,
   CreateMerchantDto,
   CreateTaskDto,
+  MerchantExportQueryDto,
   MerchantQueryDto,
   ReviewSubmissionDto,
   ReviewWithdrawalDto,
@@ -39,6 +51,26 @@ export class AdminController {
   @Get('merchant-profiles')
   merchantProfiles(@Query() query: MerchantQueryDto) {
     return this.admin.merchantProfiles(query);
+  }
+
+  @Get('merchant-profiles/export')
+  async exportMerchantProfiles(
+    @Query() query: MerchantExportQueryDto,
+    @Res() response: Response,
+  ): Promise<void> {
+    const csv = await this.admin.merchantProfilesCsv(query);
+    const dateStamp = new Date().toISOString().slice(0, 10);
+    const filename = `商户资料-${dateStamp}.csv`;
+
+    // 固定附件名称并提供 UTF-8 文件名，兼容中文浏览器与 Excel。
+    response.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    response.setHeader(
+      'Content-Disposition',
+      `attachment; filename="merchant-profiles-${dateStamp}.csv"; filename*=UTF-8''${encodeURIComponent(filename)}`,
+    );
+    response.setHeader('Cache-Control', 'no-store');
+    response.setHeader('Content-Length', Buffer.byteLength(csv, 'utf8'));
+    response.status(200).send(csv);
   }
 
   @Post('merchants')

@@ -16,6 +16,7 @@ import type {
   AuditLogQueryDto,
   CreateMerchantDto,
   CreateTaskDto,
+  MerchantExportQueryDto,
   MerchantQueryDto,
   ReviewSubmissionDto,
   ReviewWithdrawalDto,
@@ -25,6 +26,13 @@ import type {
   WalletQueryDto,
   WithdrawalQueryDto,
 } from './admin.dto';
+
+function toCsvCell(value: string | number | bigint | null | undefined): string {
+  let text = value == null ? '' : String(value).replace(/\r\n?/g, '\n');
+  // 防止 Excel 将用户输入解释为公式，避免 CSV 公式注入。
+  if (/^[=+\-@\t]/.test(text.trimStart())) text = `'${text}`;
+  return `"${text.replace(/"/g, '""')}"`;
+}
 
 @Injectable()
 export class AdminService {
@@ -91,19 +99,7 @@ export class AdminService {
     const pageSize = query.pageSize ?? 20;
     const requestedPage = query.page ?? 1;
     const keyword = query.search?.trim();
-    const where: Prisma.MerchantProfileWhereInput = {
-      ...(query.status ? { user: { status: query.status } } : {}),
-      ...(keyword
-        ? {
-            OR: [
-              { companyName: { contains: keyword, mode: 'insensitive' } },
-              { contactName: { contains: keyword, mode: 'insensitive' } },
-              { contactPhone: { contains: keyword, mode: 'insensitive' } },
-              { user: { displayName: { contains: keyword, mode: 'insensitive' } } },
-            ],
-          }
-        : {}),
-    };
+    const where = this.merchantWhere(query.status, keyword);
 
     try {
       const total = await this.prisma.merchantProfile.count({ where });
@@ -145,6 +141,81 @@ export class AdminService {
         caught instanceof Error ? caught.stack : String(caught),
       );
       throw new InternalServerErrorException('商户资料列表加载失败，请稍后重试');
+    }
+  }
+
+  async merchantProfilesCsv(query: MerchantExportQueryDto = {}) {
+    const keyword = query.search?.trim();
+    const where = this.merchantWhere(query.status, keyword);
+
+    try {
+      const rows = await this.prisma.merchantProfile.findMany({
+        where,
+        select: {
+          companyName: true,
+          contactName: true,
+          contactPhone: true,
+          note: true,
+          createdAt: true,
+          updatedAt: true,
+          user: {
+            select: {
+              username: true,
+              displayName: true,
+              status: true,
+              wallet: {
+                select: {
+                  availableCents: true,
+                  frozenCents: true,
+                },
+              },
+            },
+          },
+          _count: { select: { tasks: true } },
+        },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      });
+      const header = [
+        '商户名称',
+        '账号名称',
+        '账号显示名',
+        '联系人',
+        '联系电话',
+        '账号状态',
+        '任务数量',
+        '可用余额（分）',
+        '冻结余额（分）',
+        '备注',
+        '创建时间',
+        '更新时间',
+      ];
+      const lines = rows.map((row) =>
+        [
+          row.companyName,
+          row.user.username,
+          row.user.displayName,
+          row.contactName,
+          row.contactPhone,
+          row.user.status === 'ACTIVE' ? '正常' : '停用',
+          row._count.tasks,
+          row.user.wallet?.availableCents.toString() ?? '',
+          row.user.wallet?.frozenCents.toString() ?? '',
+          row.note,
+          row.createdAt.toISOString(),
+          row.updatedAt.toISOString(),
+        ]
+          .map(toCsvCell)
+          .join(','),
+      );
+
+      // BOM 让 Excel 正确识别 UTF-8 中文，CRLF 兼容常见表格软件。
+      return `\uFEFF${[header.map(toCsvCell).join(','), ...lines].join('\r\n')}\r\n`;
+    } catch (caught) {
+      this.logger.error(
+        '导出商户资料失败',
+        caught instanceof Error ? caught.stack : String(caught),
+      );
+      throw new InternalServerErrorException('商户资料导出失败，请稍后重试');
     }
   }
 
@@ -658,5 +729,25 @@ export class AdminService {
       take: pageSize,
     });
     return { items, total, page, pageSize };
+  }
+
+  private merchantWhere(
+    status: 'ACTIVE' | 'DISABLED' | undefined,
+    keyword: string | undefined,
+  ): Prisma.MerchantProfileWhereInput {
+    return {
+      ...(status ? { user: { status } } : {}),
+      ...(keyword
+        ? {
+            OR: [
+              { companyName: { contains: keyword, mode: 'insensitive' } },
+              { contactName: { contains: keyword, mode: 'insensitive' } },
+              { contactPhone: { contains: keyword, mode: 'insensitive' } },
+              { user: { displayName: { contains: keyword, mode: 'insensitive' } } },
+              { user: { username: { contains: keyword, mode: 'insensitive' } } },
+            ],
+          }
+        : {}),
+    };
   }
 }

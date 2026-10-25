@@ -145,6 +145,19 @@ export class MerchantQueryDto {
   search?: string;
 }
 
+export class MerchantExportQueryDto {
+  @ApiPropertyOptional({ enum: ['ACTIVE', 'DISABLED'], description: '按商户账号状态筛选' })
+  @IsOptional()
+  @IsIn(['ACTIVE', 'DISABLED'])
+  status?: 'ACTIVE' | 'DISABLED';
+
+  @ApiPropertyOptional({ description: '按公司名称、联系人、联系电话或账号名称模糊筛选' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  search?: string;
+}
+
 export class CreateTaskDto {
   @ApiProperty({ description: '前端生成的请求 UUID，用于防重复发布' })
   @IsUUID()
