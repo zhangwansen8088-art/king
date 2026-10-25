@@ -1,9 +1,10 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import type { AuthUser } from '../common/auth.types';
 import { CurrentUser, Roles } from '../common/decorators';
 import {
   AdjustWalletDto,
+  AuditLogQueryDto,
   CreateMerchantDto,
   CreateTaskDto,
   ReviewSubmissionDto,
@@ -106,7 +107,7 @@ export class AdminController {
   }
 
   @Get('audit-logs')
-  auditLogs() {
-    return this.admin.auditLogs();
+  auditLogs(@Query() query: AuditLogQueryDto) {
+    return this.admin.auditLogs(query);
   }
 }

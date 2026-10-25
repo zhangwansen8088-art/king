@@ -4,7 +4,7 @@ import { api } from '../api';
 import type {
   AdminDashboard,
   AdminWallet,
-  AuditLog,
+  AuditLogPage,
   MerchantSummary,
   SessionUser,
   Submission,
@@ -73,7 +73,6 @@ export function AdminWorkspace({ user, onLogout }: AdminWorkspaceProps) {
   const [submissions, setSubmissions] = useState<Submission[]>([]);
   const [withdrawals, setWithdrawals] = useState<Withdrawal[]>([]);
   const [wallets, setWallets] = useState<AdminWallet[]>([]);
-  const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [notice, setNotice] = useState<Notice>(null);
   const [loggingOut, setLoggingOut] = useState(false);
@@ -84,6 +83,7 @@ export function AdminWorkspace({ user, onLogout }: AdminWorkspaceProps) {
   const [taskModalOpen, setTaskModalOpen] = useState(false);
   const [reviewTarget, setReviewTarget] = useState<Submission | null>(null);
   const [withdrawalTarget, setWithdrawalTarget] = useState<Withdrawal | null>(null);
+  const showError = useCallback((text: string) => setNotice({ kind: 'error', text }), []);
 
   const load = useCallback(
     async (quiet = false) => {
@@ -124,12 +124,7 @@ export function AdminWorkspace({ user, onLogout }: AdminWorkspaceProps) {
           setDashboard(nextDashboard);
           setWithdrawals(nextWithdrawals);
         } else {
-          const [nextDashboard, nextLogs] = await Promise.all([
-            api.get<AdminDashboard>('/admin/dashboard'),
-            api.get<AuditLog[]>('/admin/audit-logs'),
-          ]);
-          setDashboard(nextDashboard);
-          setAuditLogs(nextLogs);
+          setDashboard(await api.get<AdminDashboard>('/admin/dashboard'));
         }
       } catch (caught) {
         setNotice({ kind: 'error', text: errorMessage(caught) });
@@ -280,7 +275,7 @@ export function AdminWorkspace({ user, onLogout }: AdminWorkspaceProps) {
           ) : section === 'withdrawals' ? (
             <WithdrawalsSection withdrawals={withdrawals} onReview={setWithdrawalTarget} />
           ) : (
-            <AuditSection logs={auditLogs} />
+            <AuditSection onError={showError} />
           )}
         </main>
       </div>
@@ -958,30 +953,138 @@ function WithdrawalsSection({
   );
 }
 
-function AuditSection({ logs }: { logs: AuditLog[] }) {
+function AuditSection({ onError }: { onError: (message: string) => void }) {
+  const [pageData, setPageData] = useState<AuditLogPage | null>(null);
+  const [page, setPage] = useState(1);
+  const [loading, setLoading] = useState(true);
+  const [draftAction, setDraftAction] = useState('');
+  const [draftEntityType, setDraftEntityType] = useState('');
+  const [filters, setFilters] = useState({ action: '', entityType: '' });
+
+  useEffect(() => {
+    let active = true;
+    const params = new URLSearchParams({
+      page: String(page),
+      pageSize: '20',
+    });
+    if (filters.action) params.set('action', filters.action);
+    if (filters.entityType) params.set('entityType', filters.entityType);
+
+    setLoading(true);
+    void api
+      .get<AuditLogPage>(`/admin/audit-logs?${params.toString()}`)
+      .then((nextPage) => {
+        if (!active) return;
+        setPageData(nextPage);
+        if (nextPage.page !== page) setPage(nextPage.page);
+      })
+      .catch((caught) => {
+        if (active) onError(errorMessage(caught));
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [filters, onError, page]);
+
+  function applyFilters(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setFilters({
+      action: draftAction.trim(),
+      entityType: draftEntityType.trim(),
+    });
+    setPage(1);
+  }
+
+  function clearFilters() {
+    setDraftAction('');
+    setDraftEntityType('');
+    setFilters({ action: '', entityType: '' });
+    setPage(1);
+  }
+
+  const logs = pageData?.items ?? [];
+  const total = pageData?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / (pageData?.pageSize ?? 20)));
+
   return (
     <div className="stack-section">
       <SectionHeading eyebrow="只追加记录" title="审计日志">
         管理员对商户、资金、任务和审核的动作都会留下记录。
       </SectionHeading>
-      <div className="audit-table">
-        {logs.map((log) => (
-          <article className="audit-table-row" key={log.id}>
-            <time>{formatFullDate(log.createdAt)}</time>
-            <span className="audit-action">{log.action}</span>
-            <div>
-              <strong>{log.actor?.displayName ?? '系统'}</strong>
-              <p>{log.detail}</p>
-            </div>
-            <span className="audit-entity">
-              {log.entityType}
-              <small>{log.entityId.slice(0, 8)}</small>
-            </span>
-          </article>
-        ))}
-        {!logs.length ? (
-          <EmptyState title="暂无审计记录" detail="系统产生业务操作后会记录在这里。" />
-        ) : null}
+      <form className="audit-filters" onSubmit={applyFilters}>
+        <label>
+          <span>动作</span>
+          <input
+            value={draftAction}
+            onChange={(event) => setDraftAction(event.target.value)}
+            placeholder="例如：MERCHANT"
+          />
+        </label>
+        <label>
+          <span>实体类型</span>
+          <input
+            value={draftEntityType}
+            onChange={(event) => setDraftEntityType(event.target.value)}
+            placeholder="例如：WALLET"
+          />
+        </label>
+        <div className="audit-filter-actions">
+          <button className="primary-button" type="submit">
+            筛选
+          </button>
+          <button className="ghost-button" type="button" onClick={clearFilters}>
+            清除
+          </button>
+        </div>
+      </form>
+      {loading ? (
+        <LoadingBlock />
+      ) : (
+        <div className="audit-table">
+          {logs.map((log) => (
+            <article className="audit-table-row" key={log.id}>
+              <time>{formatFullDate(log.createdAt)}</time>
+              <span className="audit-action">{log.action}</span>
+              <div>
+                <strong>{log.actor?.displayName ?? '系统'}</strong>
+                <p>{log.detail}</p>
+              </div>
+              <span className="audit-entity">
+                {log.entityType}
+                <small>{log.entityId.slice(0, 8)}</small>
+              </span>
+            </article>
+          ))}
+          {!logs.length ? (
+            <EmptyState title="暂无审计记录" detail="系统产生业务操作后会记录在这里。" />
+          ) : null}
+        </div>
+      )}
+      <div className="audit-pagination" aria-label="审计日志分页">
+        <span>
+          共 {total} 条 · 第 {page} / {totalPages} 页
+        </span>
+        <div>
+          <button
+            className="ghost-button"
+            type="button"
+            disabled={loading || page <= 1}
+            onClick={() => setPage((current) => Math.max(1, current - 1))}
+          >
+            上一页
+          </button>
+          <button
+            className="ghost-button"
+            type="button"
+            disabled={loading || page >= totalPages}
+            onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+          >
+            下一页
+          </button>
+        </div>
       </div>
     </div>
   );

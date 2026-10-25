@@ -148,6 +148,13 @@ export interface AuditLog {
   } | null;
 }
 
+export interface AuditLogPage {
+  items: AuditLog[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
 export interface AdminDashboard {
   merchants: number;
   openTasks: number;

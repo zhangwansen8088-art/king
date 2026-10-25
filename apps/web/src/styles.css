@@ -1693,6 +1693,46 @@ button:disabled {
 
 /* Audit */
 
+.audit-filters {
+  display: flex;
+  align-items: end;
+  gap: 12px;
+  padding: 16px 18px;
+  background: var(--mist);
+  border: 1px solid var(--line);
+}
+
+.audit-filters label {
+  display: grid;
+  flex: 1 1 210px;
+  gap: 5px;
+}
+
+.audit-filters label span {
+  color: var(--ink-faint);
+  font-size: 11px;
+}
+
+.audit-filters input {
+  width: 100%;
+  min-height: 38px;
+  padding: 7px 10px;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--line-strong);
+}
+
+.audit-filters input:focus {
+  border-color: var(--work);
+  outline: 0;
+  box-shadow: 0 0 0 3px rgba(44, 117, 108, 0.1);
+}
+
+.audit-filter-actions {
+  display: flex;
+  gap: 6px;
+}
+
 .audit-table {
   background: var(--paper);
   border: 1px solid var(--line);
@@ -1737,6 +1777,20 @@ button:disabled {
 .audit-entity {
   display: grid;
   justify-items: end;
+}
+
+.audit-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--ink-faint);
+  font-size: 12px;
+}
+
+.audit-pagination > div {
+  display: flex;
+  gap: 6px;
 }
 
 /* Promoter workspace */
@@ -2640,6 +2694,16 @@ button:disabled {
   .audit-table-row > div {
     grid-column: 1 / -1;
     grid-row: 2;
+  }
+
+  .audit-filters,
+  .audit-pagination {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .audit-filter-actions > button {
+    flex: 1;
   }
 
   .modal-backdrop {

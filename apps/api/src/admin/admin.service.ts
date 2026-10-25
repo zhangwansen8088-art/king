@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import type { Prisma } from '@prisma/client';
 import argon2 from 'argon2';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { FundsService } from '../business/funds.service';
@@ -6,6 +7,7 @@ import { priceTask } from '../business/business-rules';
 import { PrismaService } from '../prisma/prisma.service';
 import type {
   AdjustWalletDto,
+  AuditLogQueryDto,
   CreateMerchantDto,
   CreateTaskDto,
   ReviewSubmissionDto,
@@ -509,11 +511,25 @@ export class AdminService {
     });
   }
 
-  async auditLogs() {
-    return this.prisma.auditLog.findMany({
+  async auditLogs(query: AuditLogQueryDto = {}) {
+    const pageSize = query.pageSize ?? 20;
+    const requestedPage = query.page ?? 1;
+    const action = query.action?.trim();
+    const entityType = query.entityType?.trim();
+    const where: Prisma.AuditLogWhereInput = {
+      ...(action ? { action: { contains: action, mode: 'insensitive' } } : {}),
+      ...(entityType ? { entityType: { contains: entityType, mode: 'insensitive' } } : {}),
+    };
+    const total = await this.prisma.auditLog.count({ where });
+    const lastPage = Math.max(1, Math.ceil(total / pageSize));
+    const page = Math.min(requestedPage, lastPage);
+    const items = await this.prisma.auditLog.findMany({
+      where,
       include: { actor: { select: { id: true, displayName: true, role: true } } },
-      orderBy: { createdAt: 'desc' },
-      take: 300,
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      skip: (page - 1) * pageSize,
+      take: pageSize,
     });
+    return { items, total, page, pageSize };
   }
 }

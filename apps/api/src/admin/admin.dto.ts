@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
 import {
   IsIn,
   IsISO8601,
@@ -14,6 +15,35 @@ import {
 } from 'class-validator';
 
 const money = { message: '金额必须是字符串形式的整数分' };
+
+export class AuditLogQueryDto {
+  @ApiPropertyOptional({ default: 1, minimum: 1 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page?: number = 1;
+
+  @ApiPropertyOptional({ default: 20, minimum: 1, maximum: 100 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  pageSize?: number = 20;
+
+  @ApiPropertyOptional({ description: '按动作模糊筛选，不区分大小写' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  action?: string;
+
+  @ApiPropertyOptional({ description: '按实体类型模糊筛选，不区分大小写' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  entityType?: string;
+}
 
 export class CreateMerchantDto {
   @ApiProperty({ example: '青禾茶饮' })

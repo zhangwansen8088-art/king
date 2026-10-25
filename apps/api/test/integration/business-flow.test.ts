@@ -300,4 +300,45 @@ describe('PostgreSQL 资金与任务业务闭环', () => {
       }),
     ).toBe(1);
   });
+
+  it('审计日志按动作和实体筛选，并返回稳定分页', async () => {
+    const adminUser = await createUser({
+      username: 'audit-admin',
+      displayName: '审计测试管理员',
+      role: 'ADMIN',
+    });
+    await prisma.auditLog.createMany({
+      data: Array.from({ length: 6 }, (_, index) => ({
+        actorId: adminUser.id,
+        action: index < 4 ? `MERCHANT_ACTION_${index + 1}` : `TASK_ACTION_${index + 1}`,
+        entityType: index < 4 ? 'MERCHANT' : 'TASK',
+        entityId: randomUUID(),
+        detail: `审计分页测试记录 ${index + 1}`,
+      })),
+    });
+
+    const merchantPage = await admin.auditLogs({
+      page: 2,
+      pageSize: 2,
+      action: 'merchant',
+    });
+    expect(merchantPage).toMatchObject({ total: 4, page: 2, pageSize: 2 });
+    expect(merchantPage.items).toHaveLength(2);
+    expect(merchantPage.items.every((log) => log.entityType === 'MERCHANT')).toBe(true);
+
+    const taskPage = await admin.auditLogs({
+      page: 1,
+      pageSize: 20,
+      entityType: 'task',
+    });
+    expect(taskPage).toMatchObject({ total: 2, page: 1, pageSize: 20 });
+    expect(taskPage.items.every((log) => log.action.startsWith('TASK_ACTION_'))).toBe(true);
+
+    const clampedPage = await admin.auditLogs({
+      page: 99,
+      pageSize: 2,
+      entityType: 'TASK',
+    });
+    expect(clampedPage).toMatchObject({ total: 2, page: 1, pageSize: 2 });
+  });
 });
