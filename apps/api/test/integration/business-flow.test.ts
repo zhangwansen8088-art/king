@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AdminService } from '../../src/admin/admin.service';
 import { FundsService } from '../../src/business/funds.service';
+import { cleanupExpiredAuditLogs } from '../../src/operations/audit-retention';
 import { PrismaService } from '../../src/prisma/prisma.service';
 import { PromoterService } from '../../src/promoter/promoter.service';
 
@@ -921,5 +922,48 @@ describe('PostgreSQL 资金与任务业务闭环', () => {
       entityType: 'TASK',
     });
     expect(clampedPage).toMatchObject({ total: 2, page: 1, pageSize: 2 });
+  });
+
+  it('审计日志保留清理只删除阈值前记录并写入系统审计', async () => {
+    const now = new Date('2026-10-25T04:00:00.000Z');
+    await prisma.auditLog.createMany({
+      data: [
+        {
+          action: 'OLD_AUDIT',
+          entityType: 'TEST',
+          entityId: 'old-record',
+          detail: '保留期外测试记录',
+          createdAt: new Date('2026-09-01T00:00:00.000Z'),
+        },
+        {
+          action: 'RECENT_AUDIT',
+          entityType: 'TEST',
+          entityId: 'recent-record',
+          detail: '保留期内测试记录',
+          createdAt: new Date('2026-10-01T00:00:00.000Z'),
+        },
+      ],
+    });
+
+    const result = await cleanupExpiredAuditLogs(prisma, {
+      retentionDays: 30,
+      batchSize: 1,
+      now,
+    });
+
+    expect(result.deletedCount).toBe(1);
+    expect(
+      await prisma.auditLog.count({
+        where: { entityId: { in: ['old-record', 'recent-record'] } },
+      }),
+    ).toBe(1);
+    expect(
+      await prisma.auditLog.findFirstOrThrow({
+        where: { action: 'AUDIT_LOG_RETENTION_CLEANUP' },
+      }),
+    ).toMatchObject({
+      entityType: 'AUDIT_LOG',
+      entityId: 'automatic-retention',
+    });
   });
 });

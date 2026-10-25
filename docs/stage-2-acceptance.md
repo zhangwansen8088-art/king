@@ -3,9 +3,9 @@
 ## 验收范围
 
 - 验收日期：2026-10-25（北京时间）。
-- 代码基线：`codex/engineering-baseline` 分支，起始提交 `270e4aa`。
+- 代码基线：`codex/engineering-baseline` 分支，复验起始提交 `2340d22`。
 - 运行环境：Node.js `v24.19.0`、pnpm `11.25.0`、PostgreSQL `17.11`。
-- 数据库：本机 Docker 隔离容器 `max-promotion-integration-test-270e4aa`，仅监听 `127.0.0.1:55432`。
+- 数据库：本机 Docker 隔离容器 `max-promotion-ops-test-20261025`，仅监听 `127.0.0.1:55433`。
 - 测试库：`max_promotion_test`、`max_promotion_restore_test`、`max_promotion_seed_test`。
 - 数据性质：自动测试数据，不是生产数据、真实商户资料或真实资金。
 
@@ -15,7 +15,8 @@
 | ------------------------------ | ------------------------------------------------------------------ |
 | 全新 PostgreSQL 迁移           | 通过                                                               |
 | 演示种子                       | 3 个账号、3 个 Argon2id 密码哈希、3 个钱包、1 个商户、1 条审计日志 |
-| PostgreSQL 业务闭环            | 17/17 项通过                                                       |
+| PostgreSQL 业务闭环            | 18/18 项通过                                                       |
+| API 单元测试                   | 18/18 项通过                                                       |
 | 同一推广客户并发领取           | 仅 1 条提交、1 笔保证金冻结流水                                    |
 | 多客户竞争单名额任务           | 名额未超卖，任务领取数保持为 1                                     |
 | 商户广告余额不足               | 发布被拒绝，任务、资金流水和发布审计均未落库                       |
@@ -27,16 +28,16 @@
 本轮备份文件 SHA-256：
 
 ```text
-c255e209a60a5e01306c2de92968476d9f3a8d281cccb4d6ce89994177ecbd11
+9fe816b13b0a4057468e9804100309f86038e7801585f1a1cedaa74aeb375b0d
 ```
 
 ## 复验命令
 
 ```bash
-TEST_DATABASE_URL='postgresql://max_promotion:integration-only-password@127.0.0.1:55432/max_promotion_test?schema=public' \
+TEST_DATABASE_URL='postgresql://max_promotion:integration-only-password@127.0.0.1:55433/max_promotion_test?schema=public' \
 pnpm test:integration
 
-POSTGRES_CONTAINER=max-promotion-integration-test-270e4aa \
+POSTGRES_CONTAINER=max-promotion-ops-test-20261025 \
 POSTGRES_USER=max_promotion \
 POSTGRES_PASSWORD=integration-only-password \
 SOURCE_DB=max_promotion_test \
@@ -61,7 +62,7 @@ pnpm format:check
 - 验收完成后可停止临时容器：
 
 ```bash
-docker stop max-promotion-integration-test-270e4aa
+docker stop max-promotion-ops-test-20261025
 ```
 
 该容器以 `--rm` 启动，停止后自动删除，不影响任何本地正式数据库。

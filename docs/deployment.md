@@ -28,6 +28,14 @@ Docker 镜像自带的健康检查使用存活探针，避免数据库短暂波�
 
 API 会为每个响应返回 `X-Request-ID`。如果反向代理已传入合法请求 ID，则沿用；否则自动生成。访问日志以单行 JSON 输出到标准输出，可用 `docker compose logs -f api` 查看。日志不包含请求体、Cookie、认证令牌和查询参数。
 
+## 告警与日志保留
+
+设置 `ALERT_WEBHOOK_URL` 后，API 会把 HTTP 5xx 的服务端错误摘要以 JSON POST 到该地址。告警只包含环境、请求 ID、方法、不含查询参数的路径、状态码和错误类型，不包含原始错误消息、请求体、Cookie、令牌或业务数据。生产环境应配置 HTTPS 地址；如使用仅限内网的 HTTP 接收端，必须确保地址不可从公网访问。Webhook 未配置或发送失败时，只有本地日志记录，不影响原接口响应；同类错误在 `ALERT_COOLDOWN_MINUTES` 内只发送一次。
+
+审计日志自动清理由 `AUDIT_RETENTION_DAYS` 控制，默认值 `0` 表示关闭。启用时不得低于 30 天，建议先完成法务、财务和审计要求确认，再在预发布库观察至少一个清理周期。清理按 `AUDIT_CLEANUP_BATCH_SIZE` 分批执行，每 `AUDIT_CLEANUP_INTERVAL_HOURS` 小时检查一次，并在完成后写入 `AUDIT_LOG_RETENTION_CLEANUP` 系统审计记录。
+
+日志保留清理不能替代数据库备份。资金流水和审计策略属于高风险运营配置，生产启用前必须保留旧日志副本并记录审批人、保留期限和回滚方式。
+
 ## Coolify / VPS
 
 - 使用 Git 仓库部署，构建命令和启动命令由 Dockerfile 固定。

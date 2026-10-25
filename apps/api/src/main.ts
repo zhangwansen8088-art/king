@@ -1,15 +1,17 @@
 import 'reflect-metadata';
 import { ValidationPipe } from '@nestjs/common';
-import { NestFactory } from '@nestjs/core';
+import { HttpAdapterHost, NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import cookieParser from 'cookie-parser';
 import { json, urlencoded } from 'express';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
+import { AlertExceptionFilter } from './common/alert-exception.filter';
 import { BigIntInterceptor } from './common/bigint.interceptor';
 import { requestLoggingMiddleware } from './common/request-logging.middleware';
 import { loadEnv } from './config/env';
+import { AlertService } from './operations/alert.service';
 
 async function bootstrap(): Promise<void> {
   const env = loadEnv();
@@ -34,6 +36,9 @@ async function bootstrap(): Promise<void> {
     }),
   );
   app.useGlobalInterceptors(new BigIntInterceptor());
+  app.useGlobalFilters(
+    new AlertExceptionFilter(app.get(HttpAdapterHost).httpAdapter, app.get(AlertService)),
+  );
   app.enableCors({
     origin: env.webOrigin,
     credentials: true,
