@@ -9,6 +9,9 @@ jobs:
   quality:
     name: 格式、类型、测试与构建
     runs-on: ubuntu-latest
+    env:
+      # 仅用于生成客户端，不连接数据库；真实测试地址由集成测试任务提供。
+      DATABASE_URL: postgresql://prisma:prisma@127.0.0.1:5432/prisma
     steps:
       - name: 检出代码
         uses: actions/checkout@v7

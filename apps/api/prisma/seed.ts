@@ -1,8 +1,9 @@
 import argon2 from 'argon2';
 import { randomBytes } from 'node:crypto';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient } from '../src/generated/prisma/client';
+import { createDatabaseAdapter } from '../src/prisma/database-adapter';
 
-const prisma = new PrismaClient();
+const prisma = new PrismaClient({ adapter: createDatabaseAdapter() });
 
 function required(name: string): string {
   const value = process.env[name]?.trim();

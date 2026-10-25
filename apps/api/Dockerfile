@@ -2,6 +2,8 @@ FROM node:24-bookworm-slim AS build
 
 ENV PNPM_HOME=/pnpm
 ENV PATH=$PNPM_HOME:$PATH
+# 生成客户端只需合法连接格式，实际连接地址由运行时容器注入。
+ENV DATABASE_URL=postgresql://prisma:prisma@127.0.0.1:5432/prisma
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates openssl \
