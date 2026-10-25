@@ -1,0 +1,18 @@
+packages:
+  - apps/*
+  - packages/*
+
+overrides:
+  deepmerge-ts: 8.0.0
+  js-yaml: 5.4.1
+  multer: 2.5.0
+  webpack: 5.112.2
+
+allowBuilds:
+  '@prisma/client': true
+  '@prisma/engines': true
+  '@scarf/scarf': false
+  '@tailwindcss/oxide': true
+  argon2: true
+  esbuild: true
+  prisma: true

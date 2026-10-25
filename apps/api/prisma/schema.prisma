@@ -1,0 +1,234 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  PROMOTER
+  MERCHANT
+}
+
+enum UserStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum TaskStatus {
+  OPEN
+  PAUSED
+  ENDED
+}
+
+enum RewardType {
+  NORMAL
+  WELFARE
+}
+
+enum SubmissionStatus {
+  CLAIMED
+  SUBMITTED
+  APPROVED
+  REJECTED
+}
+
+enum WithdrawalStatus {
+  PENDING
+  PAID
+  REJECTED
+}
+
+enum LedgerType {
+  MANUAL_ADJUSTMENT
+  TASK_BUDGET_FREEZE
+  TASK_BUDGET_SETTLEMENT
+  TASK_BUDGET_REFUND
+  GUARANTEE_FREEZE
+  GUARANTEE_REFUND
+  COMMISSION
+  REFERRAL
+  WITHDRAWAL_REQUEST
+  WITHDRAWAL_PAID
+  WITHDRAWAL_REFUND
+}
+
+model User {
+  id              String             @id @default(uuid()) @db.Uuid
+  username        String             @unique
+  passwordHash    String
+  displayName     String
+  role            UserRole
+  status          UserStatus         @default(ACTIVE)
+  parentId        String?            @db.Uuid
+  parent          User?              @relation("PromoterHierarchy", fields: [parentId], references: [id])
+  children        User[]             @relation("PromoterHierarchy")
+  wallet          Wallet?
+  merchantProfile MerchantProfile?
+  refreshSessions RefreshSession[]
+  submissions     Submission[]       @relation("PromoterSubmissions")
+  reviewedSubmissions Submission[]   @relation("SubmissionReviewer")
+  withdrawals     Withdrawal[]       @relation("PromoterWithdrawals")
+  reviewedWithdrawals Withdrawal[]   @relation("WithdrawalReviewer")
+  auditLogs       AuditLog[]         @relation("AuditActor")
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+}
+
+model MerchantProfile {
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String   @unique @db.Uuid
+  user        User     @relation(fields: [userId], references: [id])
+  companyName String
+  contactName String
+  contactPhone String  @default("")
+  note        String   @default("")
+  tasks       Task[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Wallet {
+  id             String        @id @default(uuid()) @db.Uuid
+  userId         String        @unique @db.Uuid
+  user           User          @relation(fields: [userId], references: [id])
+  availableCents BigInt        @default(0)
+  frozenCents    BigInt        @default(0)
+  version        Int           @default(0)
+  ledgerEntries  LedgerEntry[]
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+}
+
+model Task {
+  id                  String       @id @default(uuid()) @db.Uuid
+  clientRequestId     String       @unique
+  merchantId          String       @db.Uuid
+  merchant            MerchantProfile @relation(fields: [merchantId], references: [id])
+  title               String
+  description         String       @default("")
+  adContent           String
+  publicPoints        String
+  region              String
+  adFeeCents          BigInt
+  rewardType          RewardType
+  welfareClaimRule    String       @default("")
+  commissionCents     BigInt
+  referralCents       BigInt
+  maxClaims           Int
+  claimedCount        Int          @default(0)
+  approvedCount       Int          @default(0)
+  budgetReservedCents BigInt
+  budgetSpentCents    BigInt       @default(0)
+  budgetRefundedCents BigInt       @default(0)
+  status              TaskStatus   @default(OPEN)
+  startsAt            DateTime
+  endsAt              DateTime
+  createdByAdminId    String?      @db.Uuid
+  submissions         Submission[]
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+  version             Int          @default(0)
+
+  @@index([status, startsAt, endsAt])
+  @@index([merchantId, createdAt])
+}
+
+model Submission {
+  id            String           @id @default(uuid()) @db.Uuid
+  taskId        String           @db.Uuid
+  task          Task             @relation(fields: [taskId], references: [id])
+  promoterId    String           @db.Uuid
+  promoter      User             @relation("PromoterSubmissions", fields: [promoterId], references: [id])
+  depositCents  BigInt
+  status        SubmissionStatus @default(CLAIMED)
+  proofText     String           @default("")
+  proofUrl      String           @default("")
+  reviewNote    String           @default("")
+  reviewerId    String?          @db.Uuid
+  reviewer      User?            @relation("SubmissionReviewer", fields: [reviewerId], references: [id])
+  claimedAt     DateTime         @default(now())
+  submittedAt   DateTime?
+  reviewedAt    DateTime?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  @@unique([taskId, promoterId])
+  @@index([promoterId, status])
+  @@index([status, createdAt])
+}
+
+model Withdrawal {
+  id            String           @id @default(uuid()) @db.Uuid
+  userId        String           @db.Uuid
+  user          User             @relation("PromoterWithdrawals", fields: [userId], references: [id])
+  amountCents   BigInt
+  payoutAccount String
+  note          String           @default("")
+  status        WithdrawalStatus @default(PENDING)
+  reviewerId    String?          @db.Uuid
+  reviewer      User?            @relation("WithdrawalReviewer", fields: [reviewerId], references: [id])
+  reviewNote    String           @default("")
+  requestedAt   DateTime         @default(now())
+  reviewedAt    DateTime?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  @@index([userId, status])
+  @@index([status, requestedAt])
+}
+
+model RefreshSession {
+  id          String    @id @default(uuid()) @db.Uuid
+  userId      String    @db.Uuid
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash   String    @unique
+  csrfHash    String
+  expiresAt   DateTime
+  revokedAt   DateTime?
+  replacedById String?  @db.Uuid
+  userAgent   String    @default("")
+  ipAddress   String    @default("")
+  createdAt   DateTime  @default(now())
+
+  @@index([userId, expiresAt])
+}
+
+model LedgerEntry {
+  id                 String     @id @default(uuid()) @db.Uuid
+  walletId           String     @db.Uuid
+  wallet             Wallet     @relation(fields: [walletId], references: [id])
+  type               LedgerType
+  amountCents        BigInt
+  availableBeforeCents BigInt
+  availableAfterCents  BigInt
+  frozenBeforeCents   BigInt
+  frozenAfterCents    BigInt
+  referenceType      String
+  referenceId        String
+  idempotencyKey     String     @unique
+  memo               String
+  actorId            String?    @db.Uuid
+  createdAt          DateTime   @default(now())
+
+  @@index([walletId, createdAt])
+  @@index([referenceType, referenceId])
+}
+
+model AuditLog {
+  id            String   @id @default(uuid()) @db.Uuid
+  actorId       String?  @db.Uuid
+  actor         User?    @relation("AuditActor", fields: [actorId], references: [id])
+  action        String
+  entityType    String
+  entityId      String
+  detail        String
+  metadata      Json?
+  createdAt     DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([entityType, entityId])
+}

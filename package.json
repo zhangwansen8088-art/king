@@ -1,0 +1,35 @@
+{
+  "name": "max-promotion",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Max 众推台：可自部署的推广任务与资金审计系统",
+  "license": "Apache-2.0",
+  "packageManager": "pnpm@11.25.0",
+  "engines": {
+    "node": ">=22.0.0",
+    "pnpm": ">=10.0.0"
+  },
+  "scripts": {
+    "dev": "pnpm dev:db && pnpm --parallel --filter @max-promotion/api --filter @max-promotion/web dev",
+    "dev:db": "docker compose -f compose.yml -f compose.dev.yml up -d db",
+    "build": "pnpm --filter @max-promotion/contracts build && pnpm -r build",
+    "typecheck": "pnpm --filter @max-promotion/contracts build && pnpm -r typecheck",
+    "lint": "pnpm -r lint",
+    "test": "pnpm --filter @max-promotion/contracts build && pnpm -r test",
+    "test:integration": "pnpm --filter @max-promotion/contracts build && pnpm --filter @max-promotion/api test:integration",
+    "test:backup-restore": "bash scripts/verify-backup-restore.sh",
+    "backup:create": "bash scripts/backup-postgres.sh",
+    "security:audit": "pnpm audit --prod --audit-level high --registry=https://registry.npmjs.org",
+    "audit:legacy": "bash scripts/audit-legacy-sqlite.sh",
+    "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm build",
+    "db:generate": "pnpm --filter @max-promotion/api prisma:generate",
+    "db:migrate": "pnpm --filter @max-promotion/api prisma:migrate",
+    "db:seed": "pnpm --filter @max-promotion/api prisma:seed",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "devDependencies": {
+    "prettier": "^3.6.2",
+    "typescript": "^5.9.2"
+  }
+}
