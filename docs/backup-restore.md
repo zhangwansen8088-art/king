@@ -7,15 +7,27 @@
 - 备份文件加密后复制到另一台服务器或对象存储。
 - 每月至少做一次恢复演练。
 
-## 备份示例
+## 创建每日备份
 
 ```bash
-docker compose exec -T db pg_dump \
-  --username "$POSTGRES_USER" \
-  --dbname "$POSTGRES_DB" \
-  --format=custom \
-  > "backup-$(date +%Y%m%d-%H%M%S).dump"
+POSTGRES_CONTAINER=max-promotion-db-1 \
+POSTGRES_USER=max_promotion \
+POSTGRES_PASSWORD='数据库密码' \
+POSTGRES_DB=max_promotion \
+BACKUP_DIR=/var/backups/max-promotion \
+BACKUP_RETENTION_DAYS=14 \
+pnpm backup:create
 ```
+
+脚本使用 PostgreSQL 自定义格式生成备份，写入后立即用 `pg_restore --list` 校验归档结构，并生成 SHA-256 校验文件。备份目录权限设为 `700`，文件权限设为 `600`；同一数据库的并发备份由系统文件锁阻止。Linux 需提供 `flock`，macOS 本机测试需提供 `shlock`。校验成功后才按文件名和修改时间删除超过保留天数的本数据库备份，不会清理目录中的其他文件。
+
+VPS 可使用 cron 每天执行，实际时间按服务器负载和运维时区安排：
+
+```cron
+15 3 * * * cd /srv/max-promotion && set -a && . ./.env && set +a && POSTGRES_CONTAINER=max-promotion-db-1 BACKUP_DIR=/var/backups/max-promotion pnpm backup:create >> /var/log/max-promotion-backup.log 2>&1
+```
+
+执行账号必须能访问 Docker，日志目录和备份目录必须仅向运维账号开放。Cron 只负责每日全量备份，不提供异地副本、WAL（预写日志）归档或加密能力。
 
 ## 恢复示例
 

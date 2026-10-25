@@ -116,3 +116,20 @@ jobs:
           SOURCE_DB=max_promotion_test \
           TARGET_DB=max_promotion_restore_test \
           bash scripts/verify-backup-restore.sh
+
+      - name: 验证每日备份脚本
+        run: |
+          POSTGRES_CONTAINER=max-promotion-test-db \
+          POSTGRES_USER=max_promotion \
+          POSTGRES_PASSWORD=test-only-password \
+          POSTGRES_DB=max_promotion_test \
+          BACKUP_DIR="$RUNNER_TEMP/max-promotion-backups" \
+          BACKUP_RETENTION_DAYS=14 \
+          bash scripts/backup-postgres.sh
+
+          test "$(stat -c '%a' "$RUNNER_TEMP/max-promotion-backups")" = "700"
+          test "$(find "$RUNNER_TEMP/max-promotion-backups" -maxdepth 1 -type f -name '*.dump' | wc -l)" -eq 1
+          test "$(find "$RUNNER_TEMP/max-promotion-backups" -maxdepth 1 -type f -name '*.dump.sha256' | wc -l)" -eq 1
+          test -z "$(find "$RUNNER_TEMP/max-promotion-backups" -maxdepth 1 -type f -name '.*.partial.*' -print -quit)"
+          cd "$RUNNER_TEMP/max-promotion-backups"
+          sha256sum -c ./*.dump.sha256
