@@ -10,6 +10,19 @@ export interface ServerErrorAlert {
   occurredAt: string;
 }
 
+export interface LoginLockoutAlert {
+  type: 'login_lockout';
+  service: 'max-promotion-api';
+  environment: string;
+  scope: 'ACCOUNT' | 'IP';
+  subjectHash: string;
+  failureCount: number;
+  lockedUntil: string;
+  occurredAt: string;
+}
+
+export type OperationalAlert = ServerErrorAlert | LoginLockoutAlert;
+
 export interface AlertNotifierOptions {
   webhookUrl: string | null;
   timeoutMs: number;
@@ -31,19 +44,23 @@ export class AlertNotifier {
     private readonly now: () => number = Date.now,
   ) {}
 
-  async notify(alert: ServerErrorAlert): Promise<boolean> {
+  async notify(alert: OperationalAlert): Promise<boolean> {
     const url = this.options.webhookUrl;
     if (!url) return false;
 
     const currentTime = this.now();
     this.pruneExpiredAttempts(currentTime);
-    const deduplicationKey = [
-      alert.environment,
-      alert.statusCode,
-      alert.method,
-      alert.path,
-      alert.errorType,
-    ].join('|');
+    const deduplicationKey =
+      alert.type === 'http_server_error'
+        ? [
+            alert.type,
+            alert.environment,
+            alert.statusCode,
+            alert.method,
+            alert.path,
+            alert.errorType,
+          ].join('|')
+        : [alert.type, alert.environment, alert.scope, alert.subjectHash].join('|');
     const previousAttempt = this.lastAttemptAt.get(deduplicationKey);
     if (previousAttempt !== undefined && currentTime - previousAttempt < this.options.cooldownMs) {
       return false;

@@ -1,3 +1,5 @@
+import { parseTrustProxy } from './trust-proxy';
+
 const required = (name: string): string => {
   const value = process.env[name]?.trim();
   if (!value) throw new Error(`缺少环境变量 ${name}`);
@@ -53,6 +55,11 @@ export interface AppEnv {
   auditRetentionDays: number;
   auditCleanupIntervalHours: number;
   auditCleanupBatchSize: number;
+  trustProxy: string[];
+  loginMaxFailures: number;
+  loginWindowMinutes: number;
+  loginLockMinutes: number;
+  loginAttemptRetentionHours: number;
 }
 
 export function loadEnv(): AppEnv {
@@ -85,5 +92,10 @@ export function loadEnv(): AppEnv {
     auditRetentionDays,
     auditCleanupIntervalHours: integer('AUDIT_CLEANUP_INTERVAL_HOURS', 24, 1, 168),
     auditCleanupBatchSize: integer('AUDIT_CLEANUP_BATCH_SIZE', 1_000, 100, 10_000),
+    trustProxy: parseTrustProxy(process.env.TRUST_PROXY_CIDRS),
+    loginMaxFailures: integer('LOGIN_MAX_FAILURES', 5, 3, 20),
+    loginWindowMinutes: integer('LOGIN_WINDOW_MINUTES', 15, 1, 1_440),
+    loginLockMinutes: integer('LOGIN_LOCK_MINUTES', 15, 1, 1_440),
+    loginAttemptRetentionHours: integer('LOGIN_ATTEMPT_RETENTION_HOURS', 24, 1, 720),
   };
 }

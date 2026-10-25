@@ -1,8 +1,10 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { JwtModule, type JwtModuleOptions } from '@nestjs/jwt';
+import { OperationsModule } from '../operations/operations.module';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
+import { LoginThrottleService } from './login-throttle.service';
 
 @Module({
   imports: [
@@ -23,9 +25,10 @@ import { AuthService } from './auth.service';
         };
       },
     }),
+    OperationsModule,
   ],
   controllers: [AuthController],
-  providers: [AuthService],
+  providers: [AuthService, LoginThrottleService],
   exports: [JwtModule],
 })
 export class AuthModule {}

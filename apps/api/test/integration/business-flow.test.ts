@@ -1,7 +1,11 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, HttpException, HttpStatus } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AdminService } from '../../src/admin/admin.service';
+import {
+  buildLoginAttemptSubjects,
+  LoginThrottleService,
+} from '../../src/auth/login-throttle.service';
 import { FundsService } from '../../src/business/funds.service';
 import { cleanupExpiredAuditLogs } from '../../src/operations/audit-retention';
 import { PrismaService } from '../../src/prisma/prisma.service';
@@ -21,6 +25,17 @@ process.env.DATABASE_URL = testDatabaseUrl;
 const fixedNow = new Date('2026-10-25T04:00:00.000Z');
 const startsAt = '2026-10-25T03:00:00.000Z';
 const endsAt = '2026-10-26T03:00:00.000Z';
+const loginSecurityEnv = {
+  JWT_SECRET: 'integration-test-jwt-secret-with-at-least-32-characters',
+  WEB_ORIGIN: 'http://127.0.0.1:5173',
+  LOGIN_MAX_FAILURES: '3',
+  LOGIN_WINDOW_MINUTES: '15',
+  LOGIN_LOCK_MINUTES: '15',
+  LOGIN_ATTEMPT_RETENTION_HOURS: '24',
+} as const;
+const previousLoginSecurityEnv = Object.fromEntries(
+  Object.keys(loginSecurityEnv).map((name) => [name, process.env[name]]),
+) as Record<keyof typeof loginSecurityEnv, string | undefined>;
 
 let prisma: PrismaService;
 let admin: AdminService;
@@ -29,7 +44,7 @@ let funds: FundsService;
 
 async function truncateTestDatabase(): Promise<void> {
   await prisma.$executeRawUnsafe(
-    'TRUNCATE TABLE "AuditLog", "LedgerEntry", "Withdrawal", "Submission", "Task", ' +
+    'TRUNCATE TABLE "LoginAttempt", "AuditLog", "LedgerEntry", "Withdrawal", "Submission", "Task", ' +
       '"MerchantProfile", "RefreshSession", "Wallet", "User" RESTART IDENTITY CASCADE',
   );
 }
@@ -158,6 +173,7 @@ async function grantApprovedClaims(
 
 describe('PostgreSQL 资金与任务业务闭环', () => {
   beforeAll(async () => {
+    Object.assign(process.env, loginSecurityEnv);
     prisma = new PrismaService();
     await prisma.$connect();
     funds = new FundsService(prisma);
@@ -174,6 +190,10 @@ describe('PostgreSQL 资金与任务业务闭环', () => {
     vi.useRealTimers();
     vi.restoreAllMocks();
     await prisma.$disconnect();
+    for (const [name, value] of Object.entries(previousLoginSecurityEnv)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
   });
 
   it('发布、领取、审核通过、返佣和剩余预算退回只结算一次', async () => {
@@ -965,5 +985,135 @@ describe('PostgreSQL 资金与任务业务闭环', () => {
       entityType: 'AUDIT_LOG',
       entityId: 'automatic-retention',
     });
+  });
+
+  it('账号和 IP 并发登录失败时不漏计，并按阈值同时锁定', async () => {
+    const username = 'concurrent-security-account';
+    const ipAddress = '203.0.113.99';
+    const throttle = new LoginThrottleService(prisma);
+    const failureResults = await Promise.all(
+      Array.from({ length: 10 }, () => throttle.recordFailure(username, ipAddress, fixedNow)),
+    );
+
+    const subjects = buildLoginAttemptSubjects(username, ipAddress);
+    const records = await prisma.loginAttempt.findMany({
+      where: {
+        OR: subjects.map(({ scope, subjectHash }) => ({ scope, subjectHash })),
+      },
+      orderBy: { scope: 'asc' },
+    });
+    expect(records).toHaveLength(2);
+    expect(records.map(({ failureCount }) => failureCount)).toEqual([10, 10]);
+    expect(records.every(({ lockedUntil }) => lockedUntil && lockedUntil > fixedNow)).toBe(true);
+    expect(
+      failureResults
+        .flat()
+        .map(({ scope }) => scope)
+        .sort(),
+    ).toEqual(['ACCOUNT', 'IP']);
+
+    try {
+      await throttle.assertAllowed(username, ipAddress);
+      throw new Error('预期并发失败达到阈值后拒绝登录');
+    } catch (error) {
+      expect(error).toBeInstanceOf(HttpException);
+      expect((error as HttpException).getStatus()).toBe(HttpStatus.TOO_MANY_REQUESTS);
+    }
+  });
+
+  it('锁定过期后再次失败时重新计数，不会被旧计数立即再次锁定', async () => {
+    const username = 'expired-lock-account';
+    const ipAddress = '203.0.113.100';
+    const throttle = new LoginThrottleService(prisma);
+    const subjects = buildLoginAttemptSubjects(username, ipAddress);
+    const [account, ip] = subjects;
+
+    await prisma.loginAttempt.create({
+      data: {
+        scope: account!.scope,
+        subjectHash: account!.subjectHash,
+        failureCount: 5,
+        windowStartedAt: new Date(fixedNow.getTime() - 60_000),
+        lastFailedAt: new Date(fixedNow.getTime() - 60_000),
+        lockedUntil: new Date(fixedNow.getTime() - 1_000),
+      },
+    });
+    await prisma.loginAttempt.create({
+      data: {
+        scope: ip!.scope,
+        subjectHash: ip!.subjectHash,
+        failureCount: 5,
+        windowStartedAt: new Date(fixedNow.getTime() - 60_000),
+        lastFailedAt: new Date(fixedNow.getTime() - 60_000),
+        lockedUntil: new Date(fixedNow.getTime() - 1_000),
+      },
+    });
+
+    const lockouts = await throttle.recordFailure(username, ipAddress, fixedNow);
+    const records = await prisma.loginAttempt.findMany({
+      where: {
+        OR: subjects.map(({ scope, subjectHash }) => ({ scope, subjectHash })),
+      },
+    });
+
+    expect(lockouts).toEqual([]);
+    expect(records).toHaveLength(2);
+    expect(records.map(({ failureCount }) => failureCount)).toEqual([1, 1]);
+    expect(records.every(({ lockedUntil }) => lockedUntil === null)).toBe(true);
+    expect(
+      records.every(({ windowStartedAt }) => windowStartedAt.getTime() === fixedNow.getTime()),
+    ).toBe(true);
+  });
+
+  it('计数清理不能删除仍在生效的锁定记录', async () => {
+    const throttle = new LoginThrottleService(prisma);
+    const active = buildLoginAttemptSubjects('active-lock-account', '203.0.113.101')[0]!;
+    const expired = buildLoginAttemptSubjects('expired-lock-cleanup-account', '203.0.113.102')[0]!;
+    const oldTime = new Date(fixedNow.getTime() - 48 * 3_600_000);
+
+    await prisma.loginAttempt.createMany({
+      data: [
+        {
+          scope: active.scope,
+          subjectHash: active.subjectHash,
+          failureCount: 5,
+          windowStartedAt: oldTime,
+          lastFailedAt: oldTime,
+          lockedUntil: new Date(fixedNow.getTime() + 3_600_000),
+          updatedAt: oldTime,
+        },
+        {
+          scope: expired.scope,
+          subjectHash: expired.subjectHash,
+          failureCount: 5,
+          windowStartedAt: oldTime,
+          lastFailedAt: oldTime,
+          lockedUntil: new Date(fixedNow.getTime() - 1_000),
+          updatedAt: oldTime,
+        },
+      ],
+    });
+
+    expect(await throttle.cleanupExpiredAttempts(fixedNow)).toBe(1);
+    expect(
+      await prisma.loginAttempt.findUnique({
+        where: {
+          scope_subjectHash: {
+            scope: active.scope,
+            subjectHash: active.subjectHash,
+          },
+        },
+      }),
+    ).not.toBeNull();
+    expect(
+      await prisma.loginAttempt.findUnique({
+        where: {
+          scope_subjectHash: {
+            scope: expired.scope,
+            subjectHash: expired.subjectHash,
+          },
+        },
+      }),
+    ).toBeNull();
   });
 });

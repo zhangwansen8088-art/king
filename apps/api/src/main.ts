@@ -21,9 +21,8 @@ async function bootstrap(): Promise<void> {
 
   app.setGlobalPrefix('api');
   app.use(requestLoggingMiddleware);
-  if (env.nodeEnv === 'production') {
-    app.set('trust proxy', 1);
-  }
+  // 只信任显式配置的代理网段；未配置时直接使用 TCP 连接地址。
+  app.set('trust proxy', env.trustProxy.length > 0 ? env.trustProxy : false);
   app.use(helmet());
   app.use(json({ limit: '1mb' }));
   app.use(urlencoded({ extended: true, limit: '1mb' }));
