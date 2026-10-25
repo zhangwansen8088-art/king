@@ -8,6 +8,7 @@ import { json, urlencoded } from 'express';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
 import { BigIntInterceptor } from './common/bigint.interceptor';
+import { requestLoggingMiddleware } from './common/request-logging.middleware';
 import { loadEnv } from './config/env';
 
 async function bootstrap(): Promise<void> {
@@ -17,6 +18,7 @@ async function bootstrap(): Promise<void> {
   });
 
   app.setGlobalPrefix('api');
+  app.use(requestLoggingMiddleware);
   if (env.nodeEnv === 'production') {
     app.set('trust proxy', 1);
   }
@@ -36,7 +38,8 @@ async function bootstrap(): Promise<void> {
     origin: env.webOrigin,
     credentials: true,
     methods: ['GET', 'POST', 'PATCH', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token', 'X-Request-ID'],
+    exposedHeaders: ['X-Request-ID'],
   });
 
   if (env.enableSwagger) {

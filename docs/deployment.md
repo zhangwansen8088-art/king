@@ -18,6 +18,16 @@
 3. 健康检查通过后访问服务器 `8080` 端口或由 Coolify 反向代理的域名。
 4. 生产环境不公开 PostgreSQL 端口。
 
+健康检查分为两类：
+
+- `GET /api/health/live`：只判断 API 进程是否存活，不访问数据库。
+- `GET /api/health/ready`：检查数据库连通性，不可用时返回 HTTP 503。
+- `GET /api/health`：保留旧地址兼容性，行为与就绪检查一致。
+
+Docker 镜像自带的健康检查使用存活探针，避免数据库短暂波动导致 API 容器被反复重启。反向代理或 Coolify 的流量就绪检查应使用 `/api/health/ready`。
+
+API 会为每个响应返回 `X-Request-ID`。如果反向代理已传入合法请求 ID，则沿用；否则自动生成。访问日志以单行 JSON 输出到标准输出，可用 `docker compose logs -f api` 查看。日志不包含请求体、Cookie、认证令牌和查询参数。
+
 ## Coolify / VPS
 
 - 使用 Git 仓库部署，构建命令和启动命令由 Dockerfile 固定。
