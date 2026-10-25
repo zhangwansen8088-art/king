@@ -15,6 +15,7 @@ import type {
   SubmissionQueryDto,
   TaskQueryDto,
   UpdateMerchantDto,
+  WithdrawalQueryDto,
 } from './admin.dto';
 
 @Injectable()
@@ -470,8 +471,15 @@ export class AdminService {
     });
   }
 
-  async withdrawals() {
-    return this.prisma.withdrawal.findMany({
+  async withdrawals(query: WithdrawalQueryDto = {}) {
+    const pageSize = query.pageSize ?? 20;
+    const requestedPage = query.page ?? 1;
+    const where: Prisma.WithdrawalWhereInput = query.status ? { status: query.status } : {};
+    const total = await this.prisma.withdrawal.count({ where });
+    const lastPage = Math.max(1, Math.ceil(total / pageSize));
+    const page = Math.min(requestedPage, lastPage);
+    const items = await this.prisma.withdrawal.findMany({
+      where,
       include: {
         user: {
           select: {
@@ -483,9 +491,11 @@ export class AdminService {
         },
         reviewer: { select: { id: true, displayName: true } },
       },
-      orderBy: [{ status: 'asc' }, { requestedAt: 'desc' }],
-      take: 300,
+      orderBy: [{ requestedAt: 'desc' }, { id: 'desc' }],
+      skip: (page - 1) * pageSize,
+      take: pageSize,
     });
+    return { items, total, page, pageSize };
   }
 
   async reviewWithdrawal(adminId: string, withdrawalId: string, body: ReviewWithdrawalDto) {

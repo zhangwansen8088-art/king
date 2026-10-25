@@ -354,6 +354,43 @@ describe('PostgreSQL 资金与任务业务闭环', () => {
     expect(await prisma.ledgerEntry.count({ where: { type: 'REFERRAL' } })).toBe(0);
   });
 
+  it('提现列表按处理状态筛选，并返回稳定分页', async () => {
+    const actors = await seedBusinessActors();
+    const statuses = ['PENDING', 'PAID', 'REJECTED', 'PAID', 'PENDING'] as const;
+    await prisma.withdrawal.createMany({
+      data: statuses.map((status, index) => ({
+        userId: actors.child.id,
+        amountCents: BigInt(50_000 + index),
+        payoutAccount: `支付宝：提现分页测试 ${index + 1}`,
+        status,
+        reviewerId: status === 'PENDING' ? null : actors.adminUser.id,
+        requestedAt: new Date(fixedNow.getTime() + index * 1_000),
+        reviewedAt: status === 'PENDING' ? null : fixedNow,
+      })),
+    });
+
+    const allPage = await admin.withdrawals({ page: 1, pageSize: 2 });
+    expect(allPage).toMatchObject({ total: 5, page: 1, pageSize: 2 });
+    expect(allPage.items).toHaveLength(2);
+    expect(allPage.items.map((item) => item.status)).toEqual(['PENDING', 'PAID']);
+
+    const paidPage = await admin.withdrawals({
+      page: 2,
+      pageSize: 1,
+      status: 'PAID',
+    });
+    expect(paidPage).toMatchObject({ total: 2, page: 2, pageSize: 1 });
+    expect(paidPage.items[0].status).toBe('PAID');
+
+    const clampedPage = await admin.withdrawals({
+      page: 99,
+      pageSize: 2,
+      status: 'REJECTED',
+    });
+    expect(clampedPage).toMatchObject({ total: 1, page: 1, pageSize: 2 });
+    expect(clampedPage.items[0].status).toBe('REJECTED');
+  });
+
   it('提现驳回不扣款，打款只扣一次，重复审核被拒绝', async () => {
     const actors = await seedBusinessActors();
     await grantApprovedClaims(actors.child.id, actors.merchantId, 120);

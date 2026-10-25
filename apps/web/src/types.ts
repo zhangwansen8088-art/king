@@ -148,6 +148,13 @@ export interface Withdrawal {
   } | null;
 }
 
+export interface WithdrawalPage {
+  items: Withdrawal[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
 export interface AuditLog {
   id: string;
   action: string;

@@ -13,6 +13,7 @@ import {
   TaskQueryDto,
   UpdateMerchantDto,
   UpdateTaskStatusDto,
+  WithdrawalQueryDto,
 } from './admin.dto';
 import { AdminService } from './admin.service';
 
@@ -95,8 +96,8 @@ export class AdminController {
   }
 
   @Get('withdrawals')
-  withdrawals() {
-    return this.admin.withdrawals();
+  withdrawals(@Query() query: WithdrawalQueryDto) {
+    return this.admin.withdrawals(query);
   }
 
   @Post('withdrawals/:id/review')

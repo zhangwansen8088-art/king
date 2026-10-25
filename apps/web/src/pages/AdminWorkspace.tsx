@@ -12,6 +12,7 @@ import type {
   Task,
   TaskPage,
   Withdrawal,
+  WithdrawalPage,
 } from '../types';
 import {
   EmptyState,
@@ -71,11 +72,11 @@ export function AdminWorkspace({ user, onLogout }: AdminWorkspaceProps) {
   const [section, setSection] = useState<AdminSection>('overview');
   const [dashboard, setDashboard] = useState<AdminDashboard | null>(null);
   const [merchants, setMerchants] = useState<MerchantSummary[]>([]);
-  const [withdrawals, setWithdrawals] = useState<Withdrawal[]>([]);
   const [wallets, setWallets] = useState<AdminWallet[]>([]);
   const [loading, setLoading] = useState(true);
   const [taskRefreshKey, setTaskRefreshKey] = useState(0);
   const [reviewRefreshKey, setReviewRefreshKey] = useState(0);
+  const [withdrawalRefreshKey, setWithdrawalRefreshKey] = useState(0);
   const [notice, setNotice] = useState<Notice>(null);
   const [loggingOut, setLoggingOut] = useState(false);
 
@@ -112,12 +113,7 @@ export function AdminWorkspace({ user, onLogout }: AdminWorkspaceProps) {
         } else if (section === 'reviews') {
           setDashboard(await api.get<AdminDashboard>('/admin/dashboard'));
         } else if (section === 'withdrawals') {
-          const [nextDashboard, nextWithdrawals] = await Promise.all([
-            api.get<AdminDashboard>('/admin/dashboard'),
-            api.get<Withdrawal[]>('/admin/withdrawals'),
-          ]);
-          setDashboard(nextDashboard);
-          setWithdrawals(nextWithdrawals);
+          setDashboard(await api.get<AdminDashboard>('/admin/dashboard'));
         } else {
           setDashboard(await api.get<AdminDashboard>('/admin/dashboard'));
         }
@@ -145,6 +141,7 @@ export function AdminWorkspace({ user, onLogout }: AdminWorkspaceProps) {
     setNotice({ kind: 'success', text: message });
     if (section === 'tasks') setTaskRefreshKey((current) => current + 1);
     if (section === 'reviews') setReviewRefreshKey((current) => current + 1);
+    if (section === 'withdrawals') setWithdrawalRefreshKey((current) => current + 1);
     await load(true);
   }
 
@@ -275,7 +272,11 @@ export function AdminWorkspace({ user, onLogout }: AdminWorkspaceProps) {
               onReview={setReviewTarget}
             />
           ) : section === 'withdrawals' ? (
-            <WithdrawalsSection withdrawals={withdrawals} onReview={setWithdrawalTarget} />
+            <WithdrawalsSection
+              refreshKey={withdrawalRefreshKey}
+              onError={showError}
+              onReview={setWithdrawalTarget}
+            />
           ) : (
             <AuditSection onError={showError} />
           )}
@@ -1049,80 +1050,168 @@ function ReviewsSection({
 }
 
 function WithdrawalsSection({
-  withdrawals,
+  refreshKey,
+  onError,
   onReview,
 }: {
-  withdrawals: Withdrawal[];
+  refreshKey: number;
+  onError: (message: string) => void;
   onReview: (withdrawal: Withdrawal) => void;
 }) {
-  const [filter, setFilter] = useState<'PENDING' | 'ALL'>('PENDING');
-  const visible = withdrawals.filter(
-    (withdrawal) => filter === 'ALL' || withdrawal.status === 'PENDING',
-  );
+  const [filter, setFilter] = useState<'ALL' | Withdrawal['status']>('PENDING');
+  const [pageData, setPageData] = useState<WithdrawalPage | null>(null);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+    const params = new URLSearchParams({
+      page: String(page),
+      pageSize: String(pageSize),
+    });
+    if (filter !== 'ALL') params.set('status', filter);
+
+    setLoading(true);
+    void api
+      .get<WithdrawalPage>(`/admin/withdrawals?${params.toString()}`)
+      .then((nextPage) => {
+        if (!active) return;
+        setPageData(nextPage);
+        if (nextPage.page !== page) setPage(nextPage.page);
+      })
+      .catch((caught) => {
+        if (active) onError(errorMessage(caught));
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [filter, onError, page, pageSize, refreshKey]);
+
+  const withdrawals = pageData?.items ?? [];
+  const total = pageData?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / (pageData?.pageSize ?? pageSize)));
 
   return (
     <div className="stack-section">
       <SectionHeading eyebrow="线下打款登记" title="提现处理">
         申请时余额不动，管理员确认打款后才从可用余额扣款。
       </SectionHeading>
-      <div className="filter-bar">
-        <button
-          type="button"
-          className={filter === 'PENDING' ? 'active' : ''}
-          onClick={() => setFilter('PENDING')}
-        >
-          待处理
-        </button>
-        <button
-          type="button"
-          className={filter === 'ALL' ? 'active' : ''}
-          onClick={() => setFilter('ALL')}
-        >
-          全部记录
-        </button>
+      <div className="task-list-controls">
+        <div className="filter-bar">
+          {(['PENDING', 'PAID', 'REJECTED', 'ALL'] as const).map((value) => (
+            <button
+              key={value}
+              type="button"
+              className={filter === value ? 'active' : ''}
+              onClick={() => {
+                setFilter(value);
+                setPage(1);
+              }}
+            >
+              {value === 'PENDING'
+                ? '待处理'
+                : value === 'PAID'
+                  ? '已打款'
+                  : value === 'REJECTED'
+                    ? '已驳回'
+                    : '全部记录'}
+            </button>
+          ))}
+        </div>
+        <label className="page-size-control">
+          <span>每页</span>
+          <select
+            value={pageSize}
+            aria-label="提现每页数量"
+            onChange={(event) => {
+              setPageSize(Number(event.target.value));
+              setPage(1);
+            }}
+          >
+            {[10, 20, 50, 100].map((value) => (
+              <option key={value} value={value}>
+                {value} 条
+              </option>
+            ))}
+          </select>
+        </label>
       </div>
 
-      <div className="withdrawal-list">
-        {visible.map((withdrawal) => (
-          <article className="withdrawal-row" key={withdrawal.id}>
-            <div className="withdrawal-person">
-              <span className="avatar">{withdrawal.user.displayName.slice(0, 1)}</span>
-              <div>
-                <strong>{withdrawal.user.displayName}</strong>
-                <span>{formatFullDate(withdrawal.requestedAt)} 申请</span>
+      {loading ? (
+        <LoadingBlock />
+      ) : (
+        <div className="withdrawal-list">
+          {withdrawals.map((withdrawal) => (
+            <article className="withdrawal-row" key={withdrawal.id}>
+              <div className="withdrawal-person">
+                <span className="avatar">{withdrawal.user.displayName.slice(0, 1)}</span>
+                <div>
+                  <strong>{withdrawal.user.displayName}</strong>
+                  <span>{formatFullDate(withdrawal.requestedAt)} 申请</span>
+                </div>
               </div>
-            </div>
-            <div className="withdrawal-amount">
-              <span>申请金额</span>
-              <Money cents={withdrawal.amountCents} />
-            </div>
-            <div className="withdrawal-account">
-              <span>收款信息</span>
-              <strong>{withdrawal.payoutAccount}</strong>
-              {withdrawal.note ? <small>{withdrawal.note}</small> : null}
-            </div>
-            <div className="withdrawal-state">
-              <StatusPill status={withdrawal.status} />
-              {withdrawal.status === 'PENDING' ? (
-                <button
-                  className="primary-button small-button"
-                  type="button"
-                  onClick={() => onReview(withdrawal)}
-                >
-                  处理
-                </button>
-              ) : (
-                <small>
-                  {withdrawal.reviewer?.displayName ?? '—'}
-                  {withdrawal.reviewNote ? ` · ${withdrawal.reviewNote}` : ''}
-                </small>
-              )}
-            </div>
-          </article>
-        ))}
-        {!visible.length ? (
-          <EmptyState title="当前没有待处理提现" detail="推广客户提交申请后会显示在这里。" />
-        ) : null}
+              <div className="withdrawal-amount">
+                <span>申请金额</span>
+                <Money cents={withdrawal.amountCents} />
+              </div>
+              <div className="withdrawal-account">
+                <span>收款信息</span>
+                <strong>{withdrawal.payoutAccount}</strong>
+                {withdrawal.note ? <small>{withdrawal.note}</small> : null}
+              </div>
+              <div className="withdrawal-state">
+                <StatusPill status={withdrawal.status} />
+                {withdrawal.status === 'PENDING' ? (
+                  <button
+                    className="primary-button small-button"
+                    type="button"
+                    onClick={() => onReview(withdrawal)}
+                  >
+                    处理
+                  </button>
+                ) : (
+                  <small>
+                    {withdrawal.reviewer?.displayName ?? '—'}
+                    {withdrawal.reviewNote ? ` · ${withdrawal.reviewNote}` : ''}
+                  </small>
+                )}
+              </div>
+            </article>
+          ))}
+          {!withdrawals.length ? (
+            <EmptyState
+              title="没有符合条件的提现"
+              detail={total ? '切换到其他状态后再查看。' : '推广客户提交申请后会显示在这里。'}
+            />
+          ) : null}
+        </div>
+      )}
+      <div className="list-pagination" aria-label="提现分页">
+        <span>
+          共 {total} 条 · 第 {page} / {totalPages} 页
+        </span>
+        <div>
+          <button
+            className="ghost-button"
+            type="button"
+            disabled={loading || page <= 1}
+            onClick={() => setPage((current) => Math.max(1, current - 1))}
+          >
+            上一页
+          </button>
+          <button
+            className="ghost-button"
+            type="button"
+            disabled={loading || page >= totalPages}
+            onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+          >
+            下一页
+          </button>
+        </div>
       </div>
     </div>
   );

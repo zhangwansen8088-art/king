@@ -238,6 +238,31 @@ export class SubmissionQueryDto {
   status?: 'CLAIMED' | 'SUBMITTED' | 'APPROVED' | 'REJECTED';
 }
 
+export class WithdrawalQueryDto {
+  @ApiPropertyOptional({ default: 1, minimum: 1 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page?: number = 1;
+
+  @ApiPropertyOptional({ default: 20, minimum: 1, maximum: 100 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  pageSize?: number = 20;
+
+  @ApiPropertyOptional({
+    enum: ['PENDING', 'PAID', 'REJECTED'],
+    description: '按提现处理状态筛选',
+  })
+  @IsOptional()
+  @IsIn(['PENDING', 'PAID', 'REJECTED'])
+  status?: 'PENDING' | 'PAID' | 'REJECTED';
+}
+
 export class ReviewSubmissionDto {
   @ApiProperty({ enum: ['APPROVED', 'REJECTED'] })
   @IsIn(['APPROVED', 'REJECTED'])
