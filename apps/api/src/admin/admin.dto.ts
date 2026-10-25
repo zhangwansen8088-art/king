@@ -191,6 +191,28 @@ export class UpdateTaskStatusDto {
   status!: 'OPEN' | 'PAUSED' | 'ENDED';
 }
 
+export class TaskQueryDto {
+  @ApiPropertyOptional({ default: 1, minimum: 1 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page?: number = 1;
+
+  @ApiPropertyOptional({ default: 20, minimum: 1, maximum: 100 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  pageSize?: number = 20;
+
+  @ApiPropertyOptional({ enum: ['OPEN', 'PAUSED', 'ENDED'], description: '按任务状态筛选' })
+  @IsOptional()
+  @IsIn(['OPEN', 'PAUSED', 'ENDED'])
+  status?: 'OPEN' | 'PAUSED' | 'ENDED';
+}
+
 export class ReviewSubmissionDto {
   @ApiProperty({ enum: ['APPROVED', 'REJECTED'] })
   @IsIn(['APPROVED', 'REJECTED'])

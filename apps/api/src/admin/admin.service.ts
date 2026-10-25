@@ -12,6 +12,7 @@ import type {
   CreateTaskDto,
   ReviewSubmissionDto,
   ReviewWithdrawalDto,
+  TaskQueryDto,
   UpdateMerchantDto,
 } from './admin.dto';
 
@@ -135,15 +136,24 @@ export class AdminService {
     });
   }
 
-  async tasks() {
-    return this.prisma.task.findMany({
+  async tasks(query: TaskQueryDto = {}) {
+    const pageSize = query.pageSize ?? 20;
+    const requestedPage = query.page ?? 1;
+    const where: Prisma.TaskWhereInput = query.status ? { status: query.status } : {};
+    const total = await this.prisma.task.count({ where });
+    const lastPage = Math.max(1, Math.ceil(total / pageSize));
+    const page = Math.min(requestedPage, lastPage);
+    const items = await this.prisma.task.findMany({
+      where,
       include: {
         merchant: { include: { user: { select: { displayName: true } } } },
         _count: { select: { submissions: true } },
       },
-      orderBy: { createdAt: 'desc' },
-      take: 200,
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      skip: (page - 1) * pageSize,
+      take: pageSize,
     });
+    return { items, total, page, pageSize };
   }
 
   async createTask(adminId: string, body: CreateTaskDto) {

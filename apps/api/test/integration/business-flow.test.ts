@@ -229,6 +229,43 @@ describe('PostgreSQL 资金与任务业务闭环', () => {
     expect(closedTask.budgetRefundedCents).toBe(384n);
   });
 
+  it('任务列表按状态筛选，并返回稳定分页', async () => {
+    const actors = await seedBusinessActors();
+    const statuses = ['OPEN', 'OPEN', 'PAUSED', 'ENDED', 'OPEN'] as const;
+    await prisma.task.createMany({
+      data: statuses.map((status, index) => ({
+        clientRequestId: randomUUID(),
+        merchantId: actors.merchantId,
+        title: `任务分页测试 ${index + 1}`,
+        adContent: '任务分页测试广告内容',
+        publicPoints: '任务分页测试展示要求',
+        region: '上海',
+        adFeeCents: 100_000n,
+        rewardType: 'NORMAL',
+        commissionCents: 320n,
+        referralCents: 64n,
+        maxClaims: 1,
+        budgetReservedCents: 384n,
+        status,
+        startsAt: new Date(startsAt),
+        endsAt: new Date(endsAt),
+      })),
+    });
+
+    const allPage = await admin.tasks({ page: 1, pageSize: 2 });
+    expect(allPage).toMatchObject({ total: 5, page: 1, pageSize: 2 });
+    expect(allPage.items).toHaveLength(2);
+
+    const openPage = await admin.tasks({ page: 2, pageSize: 1, status: 'OPEN' });
+    expect(openPage).toMatchObject({ total: 3, page: 2, pageSize: 1 });
+    expect(openPage.items).toHaveLength(1);
+    expect(openPage.items[0].status).toBe('OPEN');
+
+    const clampedPage = await admin.tasks({ page: 99, pageSize: 2, status: 'ENDED' });
+    expect(clampedPage).toMatchObject({ total: 1, page: 1, pageSize: 2 });
+    expect(clampedPage.items[0].status).toBe('ENDED');
+  });
+
   it('凭证驳回只退保证金，不扣任务预算和佣金', async () => {
     const actors = await seedBusinessActors();
     const task = await admin.createTask(actors.adminUser.id, taskDraft(actors.merchantId));

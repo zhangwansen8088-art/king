@@ -9,6 +9,7 @@ import type {
   SessionUser,
   Submission,
   Task,
+  TaskPage,
   Withdrawal,
 } from '../types';
 import {
@@ -69,11 +70,11 @@ export function AdminWorkspace({ user, onLogout }: AdminWorkspaceProps) {
   const [section, setSection] = useState<AdminSection>('overview');
   const [dashboard, setDashboard] = useState<AdminDashboard | null>(null);
   const [merchants, setMerchants] = useState<MerchantSummary[]>([]);
-  const [tasks, setTasks] = useState<Task[]>([]);
   const [submissions, setSubmissions] = useState<Submission[]>([]);
   const [withdrawals, setWithdrawals] = useState<Withdrawal[]>([]);
   const [wallets, setWallets] = useState<AdminWallet[]>([]);
   const [loading, setLoading] = useState(true);
+  const [taskRefreshKey, setTaskRefreshKey] = useState(0);
   const [notice, setNotice] = useState<Notice>(null);
   const [loggingOut, setLoggingOut] = useState(false);
 
@@ -101,13 +102,11 @@ export function AdminWorkspace({ user, onLogout }: AdminWorkspaceProps) {
           setMerchants(nextMerchants);
           setWallets(nextWallets);
         } else if (section === 'tasks') {
-          const [nextDashboard, nextTasks, nextMerchants] = await Promise.all([
+          const [nextDashboard, nextMerchants] = await Promise.all([
             api.get<AdminDashboard>('/admin/dashboard'),
-            api.get<Task[]>('/admin/tasks'),
             api.get<MerchantSummary[]>('/admin/merchants'),
           ]);
           setDashboard(nextDashboard);
-          setTasks(nextTasks);
           setMerchants(nextMerchants);
         } else if (section === 'reviews') {
           const [nextDashboard, nextSubmissions] = await Promise.all([
@@ -148,6 +147,7 @@ export function AdminWorkspace({ user, onLogout }: AdminWorkspaceProps) {
 
   async function afterMutation(message: string) {
     setNotice({ kind: 'success', text: message });
+    if (section === 'tasks') setTaskRefreshKey((current) => current + 1);
     await load(true);
   }
 
@@ -259,7 +259,8 @@ export function AdminWorkspace({ user, onLogout }: AdminWorkspaceProps) {
             />
           ) : section === 'tasks' ? (
             <TasksSection
-              tasks={tasks}
+              refreshKey={taskRefreshKey}
+              onError={showError}
               onCreate={() => setTaskModalOpen(true)}
               onStatus={async (task, status) => {
                 try {
@@ -624,23 +625,59 @@ function MerchantsSection({
 }
 
 function TasksSection({
-  tasks,
+  refreshKey,
+  onError,
   onCreate,
   onStatus,
 }: {
-  tasks: Task[];
+  refreshKey: number;
+  onError: (message: string) => void;
   onCreate: () => void;
   onStatus: (task: Task, status: 'OPEN' | 'PAUSED' | 'ENDED') => Promise<void>;
 }) {
   const [filter, setFilter] = useState<'ALL' | 'OPEN' | 'PAUSED' | 'ENDED'>('ALL');
+  const [pageData, setPageData] = useState<TaskPage | null>(null);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [loading, setLoading] = useState(true);
   const [busyTask, setBusyTask] = useState('');
-  const visibleTasks = tasks.filter((task) => filter === 'ALL' || task.status === filter);
+
+  useEffect(() => {
+    let active = true;
+    const params = new URLSearchParams({
+      page: String(page),
+      pageSize: String(pageSize),
+    });
+    if (filter !== 'ALL') params.set('status', filter);
+
+    setLoading(true);
+    void api
+      .get<TaskPage>(`/admin/tasks?${params.toString()}`)
+      .then((nextPage) => {
+        if (!active) return;
+        setPageData(nextPage);
+        if (nextPage.page !== page) setPage(nextPage.page);
+      })
+      .catch((caught) => {
+        if (active) onError(errorMessage(caught));
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [filter, onError, page, pageSize, refreshKey]);
 
   async function update(task: Task, status: 'OPEN' | 'PAUSED' | 'ENDED') {
     setBusyTask(task.id);
     await onStatus(task, status);
     setBusyTask('');
   }
+
+  const tasks = pageData?.items ?? [];
+  const total = pageData?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / (pageData?.pageSize ?? pageSize)));
 
   return (
     <div className="stack-section">
@@ -656,120 +693,169 @@ function TasksSection({
         发布时冻结商户最高预算，审核通过后按实际结算。
       </SectionHeading>
 
-      <div className="filter-bar">
-        {(['ALL', 'OPEN', 'PAUSED', 'ENDED'] as const).map((value) => (
-          <button
-            key={value}
-            type="button"
-            className={filter === value ? 'active' : ''}
-            onClick={() => setFilter(value)}
+      <div className="task-list-controls">
+        <div className="filter-bar">
+          {(['ALL', 'OPEN', 'PAUSED', 'ENDED'] as const).map((value) => (
+            <button
+              key={value}
+              type="button"
+              className={filter === value ? 'active' : ''}
+              onClick={() => {
+                setFilter(value);
+                setPage(1);
+              }}
+            >
+              {value === 'ALL'
+                ? '全部'
+                : value === 'OPEN'
+                  ? '进行中'
+                  : value === 'PAUSED'
+                    ? '已暂停'
+                    : '已结束'}
+            </button>
+          ))}
+        </div>
+        <label className="page-size-control">
+          <span>每页</span>
+          <select
+            value={pageSize}
+            aria-label="任务每页数量"
+            onChange={(event) => {
+              setPageSize(Number(event.target.value));
+              setPage(1);
+            }}
           >
-            {value === 'ALL'
-              ? '全部'
-              : value === 'OPEN'
-                ? '进行中'
-                : value === 'PAUSED'
-                  ? '已暂停'
-                  : '已结束'}
-          </button>
-        ))}
+            {[10, 20, 50, 100].map((value) => (
+              <option key={value} value={value}>
+                {value} 条
+              </option>
+            ))}
+          </select>
+        </label>
       </div>
 
-      <div className="task-ledger">
-        {visibleTasks.map((task) => {
-          const progress = task.maxClaims
-            ? Math.min(100, Math.round((task.claimedCount / task.maxClaims) * 100))
-            : 0;
-          return (
-            <article className="task-row" key={task.id}>
-              <div className="task-row-head">
-                <div className="task-identity">
-                  <span className="task-number">任务</span>
-                  <div>
-                    <h3>{task.title}</h3>
-                    <p>
-                      {task.merchant?.companyName ?? '商户资料'} · {task.region} ·{' '}
-                      {task.rewardType === 'NORMAL' ? '普通任务' : '福利任务'}
-                    </p>
+      {loading ? (
+        <LoadingBlock />
+      ) : (
+        <div className="task-ledger">
+          {tasks.map((task) => {
+            const progress = task.maxClaims
+              ? Math.min(100, Math.round((task.claimedCount / task.maxClaims) * 100))
+              : 0;
+            return (
+              <article className="task-row" key={task.id}>
+                <div className="task-row-head">
+                  <div className="task-identity">
+                    <span className="task-number">任务</span>
+                    <div>
+                      <h3>{task.title}</h3>
+                      <p>
+                        {task.merchant?.companyName ?? '商户资料'} · {task.region} ·{' '}
+                        {task.rewardType === 'NORMAL' ? '普通任务' : '福利任务'}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="task-row-status">
+                    <StatusPill status={task.status} />
+                    <span>{formatDate(task.endsAt)} 截止</span>
                   </div>
                 </div>
-                <div className="task-row-status">
-                  <StatusPill status={task.status} />
-                  <span>{formatDate(task.endsAt)} 截止</span>
+                <div className="task-data-grid">
+                  <div>
+                    <span>单笔佣金</span>
+                    <Money cents={task.commissionCents} size="small" />
+                  </div>
+                  <div>
+                    <span>一级返佣</span>
+                    <Money cents={task.referralCents} size="small" />
+                  </div>
+                  <div>
+                    <span>最高预算</span>
+                    <Money cents={task.budgetReservedCents} size="small" />
+                  </div>
+                  <div>
+                    <span>已结算</span>
+                    <Money cents={task.budgetSpentCents} size="small" />
+                  </div>
                 </div>
-              </div>
-              <div className="task-data-grid">
-                <div>
-                  <span>单笔佣金</span>
-                  <Money cents={task.commissionCents} size="small" />
-                </div>
-                <div>
-                  <span>一级返佣</span>
-                  <Money cents={task.referralCents} size="small" />
-                </div>
-                <div>
-                  <span>最高预算</span>
-                  <Money cents={task.budgetReservedCents} size="small" />
-                </div>
-                <div>
-                  <span>已结算</span>
-                  <Money cents={task.budgetSpentCents} size="small" />
-                </div>
-              </div>
-              <div className="task-progress">
-                <div>
-                  <span>
-                    已领取 {task.claimedCount} / {task.maxClaims}
+                <div className="task-progress">
+                  <div>
+                    <span>
+                      已领取 {task.claimedCount} / {task.maxClaims}
+                    </span>
+                    <span>{progress}%</span>
+                  </div>
+                  <span className="progress-track">
+                    <span style={{ width: `${progress}%` }} />
                   </span>
-                  <span>{progress}%</span>
                 </div>
-                <span className="progress-track">
-                  <span style={{ width: `${progress}%` }} />
-                </span>
-              </div>
-              <div className="task-actions">
-                {task.status === 'OPEN' ? (
-                  <button
-                    className="small-button"
-                    type="button"
-                    disabled={busyTask === task.id}
-                    onClick={() => void update(task, 'PAUSED')}
-                  >
-                    暂停任务
-                  </button>
-                ) : null}
-                {task.status === 'PAUSED' ? (
-                  <button
-                    className="small-button"
-                    type="button"
-                    disabled={busyTask === task.id}
-                    onClick={() => void update(task, 'OPEN')}
-                  >
-                    恢复任务
-                  </button>
-                ) : null}
-                {task.status !== 'ENDED' ? (
-                  <button
-                    className="small-button danger-button"
-                    type="button"
-                    disabled={busyTask === task.id}
-                    onClick={() => void update(task, 'ENDED')}
-                  >
-                    结束并退余款
-                  </button>
-                ) : null}
-              </div>
-            </article>
-          );
-        })}
-        {!visibleTasks.length ? (
-          <EmptyState
-            title="没有符合条件的任务"
-            detail={
-              tasks.length ? '切换状态筛选后再查看。' : '发布首个任务后，预算和进度会显示在这里。'
-            }
-          />
-        ) : null}
+                <div className="task-actions">
+                  {task.status === 'OPEN' ? (
+                    <button
+                      className="small-button"
+                      type="button"
+                      disabled={busyTask === task.id}
+                      onClick={() => void update(task, 'PAUSED')}
+                    >
+                      暂停任务
+                    </button>
+                  ) : null}
+                  {task.status === 'PAUSED' ? (
+                    <button
+                      className="small-button"
+                      type="button"
+                      disabled={busyTask === task.id}
+                      onClick={() => void update(task, 'OPEN')}
+                    >
+                      恢复任务
+                    </button>
+                  ) : null}
+                  {task.status !== 'ENDED' ? (
+                    <button
+                      className="small-button danger-button"
+                      type="button"
+                      disabled={busyTask === task.id}
+                      onClick={() => void update(task, 'ENDED')}
+                    >
+                      结束并退余款
+                    </button>
+                  ) : null}
+                </div>
+              </article>
+            );
+          })}
+          {!tasks.length ? (
+            <EmptyState
+              title="没有符合条件的任务"
+              detail={
+                total ? '切换到其他状态后再查看。' : '发布首个任务后，预算和进度会显示在这里。'
+              }
+            />
+          ) : null}
+        </div>
+      )}
+      <div className="list-pagination" aria-label="任务分页">
+        <span>
+          共 {total} 条 · 第 {page} / {totalPages} 页
+        </span>
+        <div>
+          <button
+            className="ghost-button"
+            type="button"
+            disabled={loading || page <= 1}
+            onClick={() => setPage((current) => Math.max(1, current - 1))}
+          >
+            上一页
+          </button>
+          <button
+            className="ghost-button"
+            type="button"
+            disabled={loading || page >= totalPages}
+            onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+          >
+            下一页
+          </button>
+        </div>
       </div>
     </div>
   );

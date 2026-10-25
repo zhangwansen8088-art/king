@@ -9,6 +9,7 @@ import {
   CreateTaskDto,
   ReviewSubmissionDto,
   ReviewWithdrawalDto,
+  TaskQueryDto,
   UpdateMerchantDto,
   UpdateTaskStatusDto,
 } from './admin.dto';
@@ -46,8 +47,8 @@ export class AdminController {
   }
 
   @Get('tasks')
-  tasks() {
-    return this.admin.tasks();
+  tasks(@Query() query: TaskQueryDto) {
+    return this.admin.tasks(query);
   }
 
   @Post('tasks')

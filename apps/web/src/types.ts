@@ -85,6 +85,13 @@ export interface Task {
   updatedAt: string;
 }
 
+export interface TaskPage {
+  items: Task[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
 export interface Submission {
   id: string;
   taskId: string;

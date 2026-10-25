@@ -1374,6 +1374,34 @@ button:disabled {
 
 /* Tasks */
 
+.task-list-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.task-list-controls .filter-bar {
+  margin-top: 0;
+}
+
+.page-size-control {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--ink-faint);
+  font-size: 11px;
+}
+
+.page-size-control select {
+  min-height: 32px;
+  padding: 4px 28px 4px 9px;
+  color: var(--ink-soft);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  font-size: 12px;
+}
+
 .task-ledger {
   display: grid;
 }
@@ -1779,7 +1807,8 @@ button:disabled {
   justify-items: end;
 }
 
-.audit-pagination {
+.audit-pagination,
+.list-pagination {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1788,7 +1817,8 @@ button:disabled {
   font-size: 12px;
 }
 
-.audit-pagination > div {
+.audit-pagination > div,
+.list-pagination > div {
   display: flex;
   gap: 6px;
 }
@@ -2697,7 +2727,8 @@ button:disabled {
   }
 
   .audit-filters,
-  .audit-pagination {
+  .audit-pagination,
+  .list-pagination {
     align-items: stretch;
     flex-direction: column;
   }
