@@ -46,25 +46,11 @@ jobs:
         run: docker compose --env-file .env.example -f compose.yml config --quiet
 
   integration:
-    name: PostgreSQL 业务闭环
+    name: PostgreSQL 业务闭环与恢复演练
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:17-alpine
-        env:
-          POSTGRES_DB: max_promotion_test
-          POSTGRES_USER: max_promotion
-          POSTGRES_PASSWORD: test-only-password
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U max_promotion -d max_promotion_test"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 20
     env:
-      DATABASE_URL: postgresql://max_promotion:test-only-password@127.0.0.1:5432/max_promotion_test?schema=public
-      TEST_DATABASE_URL: postgresql://max_promotion:test-only-password@127.0.0.1:5432/max_promotion_test?schema=public
+      DATABASE_URL: postgresql://max_promotion:test-only-password@127.0.0.1:55432/max_promotion_test?schema=public
+      TEST_DATABASE_URL: postgresql://max_promotion:test-only-password@127.0.0.1:55432/max_promotion_test?schema=public
       SEED_DEMO_DATA: 'true'
       DEMO_ADMIN_USERNAME: ci-admin
       DEMO_ADMIN_PASSWORD: ci-admin-password
@@ -93,6 +79,26 @@ jobs:
       - name: 生成 Prisma 客户端
         run: pnpm db:generate
 
+      - name: 启动临时 PostgreSQL
+        run: |
+          docker run --rm -d \
+            --name max-promotion-test-db \
+            -e POSTGRES_DB=max_promotion_test \
+            -e POSTGRES_USER=max_promotion \
+            -e POSTGRES_PASSWORD=test-only-password \
+            -p 127.0.0.1:55432:5432 \
+            postgres:17-alpine
+
+      - name: 等待临时 PostgreSQL 就绪
+        run: |
+          for attempt in {1..30}; do
+            if docker exec max-promotion-test-db pg_isready -U max_promotion -d max_promotion_test; then
+              exit 0
+            fi
+            sleep 2
+          done
+          exit 1
+
       - name: 执行数据库迁移
         run: pnpm --filter @max-promotion/api prisma:migrate:deploy
 
@@ -101,3 +107,12 @@ jobs:
 
       - name: 运行 PostgreSQL 业务闭环测试
         run: pnpm test:integration
+
+      - name: 执行备份恢复与逐表核对
+        run: |
+          POSTGRES_CONTAINER=max-promotion-test-db \
+          POSTGRES_USER=max_promotion \
+          POSTGRES_PASSWORD=test-only-password \
+          SOURCE_DB=max_promotion_test \
+          TARGET_DB=max_promotion_restore_test \
+          bash scripts/verify-backup-restore.sh

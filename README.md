@@ -58,6 +58,19 @@ pnpm test:integration
 
 测试会清空 `TEST_DATABASE_URL` 指向的数据库；代码带有数据库名后缀保护，不能将其指向正式库。GitHub Actions 会自动启动临时 PostgreSQL 执行同一套验收。阶段安排见 [实施路线图](docs/roadmap.md)。
 
+测试数据准备完成后，可验证备份能否完整恢复：
+
+```bash
+POSTGRES_CONTAINER=max-promotion-test-db \
+POSTGRES_USER=max_promotion \
+POSTGRES_PASSWORD=test-only-password \
+SOURCE_DB=max_promotion_test \
+TARGET_DB=max_promotion_restore_test \
+pnpm test:backup-restore
+```
+
+该脚本只接受名称以 `_test` 结尾的源库和目标库，恢复后会逐表比较行数和完整内容指纹。
+
 ## Docker Compose
 
 生产配置至少需要修改数据库密码、JWT 密钥、正式域名和 Cookie 安全开关。具体步骤见 [部署说明](docs/deployment.md)。
