@@ -58,6 +58,22 @@ function isPublicHttpUrl(value: string): boolean {
   }
 }
 
+// 推广端只下发任务展示所需字段；商户联系人/电话/备注、广告费与预算属于商户内部数据，不下发。
+const PROMOTER_TASK_SELECT = {
+  id: true,
+  title: true,
+  adContent: true,
+  publicPoints: true,
+  region: true,
+  rewardType: true,
+  welfareClaimRule: true,
+  commissionCents: true,
+  endsAt: true,
+  merchant: { select: { id: true, companyName: true, displayName: true } },
+} as const;
+
+const PROMOTER_SUBMISSION_INCLUDE = { task: { select: PROMOTER_TASK_SELECT } } as const;
+
 @Injectable()
 export class PromoterService {
   constructor(
@@ -75,12 +91,12 @@ export class PromoterService {
         }),
         this.prisma.submission.findFirst({
           where: { promoterId: userId, status: { in: ['CLAIMED', 'SUBMITTED'] } },
-          include: { task: { include: { merchant: true } } },
+          include: PROMOTER_SUBMISSION_INCLUDE,
           orderBy: { claimedAt: 'desc' },
         }),
         this.prisma.submission.findMany({
           where: { promoterId: userId },
-          include: { task: { include: { merchant: true } } },
+          include: PROMOTER_SUBMISSION_INCLUDE,
           orderBy: { claimedAt: 'desc' },
           take: 12,
         }),
