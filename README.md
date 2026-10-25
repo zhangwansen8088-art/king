@@ -20,7 +20,7 @@ compose.yml             API、Web、PostgreSQL 和迁移容器编排
 
 ## 本地运行
 
-要求 Node.js 22 或更高版本、pnpm 10 或更高版本、Docker。
+要求 Node.js 24 或更高版本（仓库 `package.json` 的 `engines` 与实际 Dockerfile 均为 24）、pnpm 10 或更高版本、Docker。
 
 ```bash
 cp .env.example .env
