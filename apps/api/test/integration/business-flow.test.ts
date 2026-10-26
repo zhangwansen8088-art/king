@@ -385,7 +385,7 @@ describe('PostgreSQL 资金与任务业务闭环', () => {
 
     expect(submission.taskId).toBe(task.id);
     expect(submission.status).toBe('CLAIMED');
-    expect(submission.depositCents).toBe(140_000n);
+    expect(submission.depositCents).toBe(100_000n);
     await promoter.submitProof(actors.child.id, submission.id, {
       proofText: '福利任务已完成展示并上传凭证',
       proofUrl: 'https://example.com/welfare-proof',
@@ -400,6 +400,61 @@ describe('PostgreSQL 资金与任务业务闭环', () => {
 
     expect(reviewed.status).toBe('APPROVED');
     expect(await prisma.submission.count({ where: { taskId: task.id } })).toBe(1);
+    expect(await prisma.submission.count({ where: { promoterId: actors.child.id } })).toBe(1);
+    expect(await prisma.task.findUniqueOrThrow({ where: { id: task.id } })).toMatchObject({
+      claimedCount: 1,
+    });
+    expect(
+      await prisma.wallet.findUniqueOrThrow({ where: { userId: actors.child.id } }),
+    ).toMatchObject({
+      availableCents: 205_000n,
+      frozenCents: 0n,
+    });
+  });
+
+  it('福利任务余额不足时仍领取并只冻结现有余额', async () => {
+    const actors = await seedBusinessActors();
+    await prisma.wallet.update({
+      where: { userId: actors.child.id },
+      data: { availableCents: 0n },
+    });
+    const task = await admin.createTask(
+      actors.adminUser.id,
+      taskDraft(actors.merchantId, {
+        rewardType: 'WELFARE',
+        welfareClaimRule: '上海地区用户，线上领取，每人限领 1 份',
+        maxClaims: 1,
+      }),
+    );
+
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0);
+    const submission = await promoter.claimRandom(actors.child.id);
+    random.mockRestore();
+
+    expect(submission.taskId).toBe(task.id);
+    expect(submission.depositCents).toBe(0n);
+    expect(
+      await prisma.wallet.findUniqueOrThrow({ where: { userId: actors.child.id } }),
+    ).toMatchObject({
+      availableCents: 0n,
+      frozenCents: 0n,
+    });
+    expect(await prisma.ledgerEntry.count({ where: { type: 'GUARANTEE_FREEZE' } })).toBe(0);
+  });
+
+  it('普通任务余额不足时仍按原规则拒绝领取', async () => {
+    const actors = await seedBusinessActors();
+    await prisma.wallet.update({
+      where: { userId: actors.child.id },
+      data: { availableCents: 0n },
+    });
+    await admin.createTask(actors.adminUser.id, taskDraft(actors.merchantId, { maxClaims: 1 }));
+
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0);
+    await expect(promoter.claimRandom(actors.child.id)).rejects.toThrow(
+      '可用余额不足，无法领取任务',
+    );
+    random.mockRestore();
   });
 
   it('多笔待审提现占用可用余额，驳回后可再次申请', async () => {

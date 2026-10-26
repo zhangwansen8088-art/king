@@ -158,8 +158,15 @@ export class PromoterService {
 
         const wallet = await tx.wallet.findUnique({ where: { userId } });
         if (!wallet) throw new NotFoundException('资金钱包不存在');
-        const depositCents = randomGuaranteeCents(wallet.availableCents);
-        if (depositCents < 1n) throw new BadRequestException('可用余额不足，无法领取任务');
+        const depositCents =
+          task.rewardType === 'WELFARE'
+            ? task.adFeeCents < wallet.availableCents
+              ? task.adFeeCents
+              : wallet.availableCents
+            : randomGuaranteeCents(wallet.availableCents);
+        if (task.rewardType === 'NORMAL' && depositCents < 1n) {
+          throw new BadRequestException('可用余额不足，无法领取任务');
+        }
 
         const submission = await tx.submission.create({
           data: { taskId: task.id, promoterId: userId, depositCents },
@@ -168,17 +175,19 @@ export class PromoterService {
           where: { id: task.id },
           data: { claimedCount: { increment: 1 }, version: { increment: 1 } },
         });
-        await this.funds.change(tx, {
-          userId,
-          availableDelta: -depositCents,
-          frozenDelta: depositCents,
-          type: 'GUARANTEE_FREEZE',
-          referenceType: 'SUBMISSION',
-          referenceId: submission.id,
-          idempotencyKey: `submission:${submission.id}:guarantee:freeze`,
-          memo: `领取“${task.title}”，冻结本单保证金`,
-          actorId: userId,
-        });
+        if (depositCents > 0n) {
+          await this.funds.change(tx, {
+            userId,
+            availableDelta: -depositCents,
+            frozenDelta: depositCents,
+            type: 'GUARANTEE_FREEZE',
+            referenceType: 'SUBMISSION',
+            referenceId: submission.id,
+            idempotencyKey: `submission:${submission.id}:guarantee:freeze`,
+            memo: `领取“${task.title}”，冻结本单保证金`,
+            actorId: userId,
+          });
+        }
         await this.funds.audit(
           tx,
           userId,
