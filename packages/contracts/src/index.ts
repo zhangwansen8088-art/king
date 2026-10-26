@@ -74,7 +74,6 @@ export interface TaskView {
   merchant: {
     id: string;
     companyName: string;
-    displayName: string;
   };
 }
 

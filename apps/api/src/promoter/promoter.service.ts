@@ -94,7 +94,7 @@ const PROMOTER_TASK_SELECT = {
   welfareClaimRule: true,
   commissionCents: true,
   endsAt: true,
-  merchant: { select: { id: true, companyName: true, displayName: true } },
+  merchant: { select: { id: true, companyName: true } },
 } as const;
 
 const PROMOTER_SUBMISSION_INCLUDE = { task: { select: PROMOTER_TASK_SELECT } } as const;

@@ -275,6 +275,22 @@ describe('PostgreSQL 资金与任务业务闭环', () => {
     }
   });
 
+  it('推广端 dashboard 查询任务商户字段不触发 Prisma 字段错误', async () => {
+    const actors = await seedBusinessActors();
+    await admin.createTask(actors.adminUser.id, taskDraft(actors.merchantId));
+
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0);
+    await promoter.claimRandom(actors.child.id);
+    random.mockRestore();
+
+    const dashboard = await promoter.dashboard(actors.child.id);
+    expect(dashboard.activeSubmission?.task.merchant).toEqual({
+      id: actors.merchantId,
+      companyName: '集成测试商户',
+    });
+    expect(dashboard.recentSubmissions[0]?.task.merchant.companyName).toBe('集成测试商户');
+  });
+
   it('发布、领取、审核通过、返佣和剩余预算退回只结算一次', async () => {
     const actors = await seedBusinessActors();
     const draft = taskDraft(actors.merchantId);

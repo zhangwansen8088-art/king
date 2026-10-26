@@ -72,7 +72,7 @@ describe('推广端任务只下发展示字段', () => {
         welfareClaimRule: '',
         commissionCents: 320n,
         endsAt: new Date('2026-11-01T00:00:00.000Z'),
-        merchant: { id: 'merchant-1', companyName: '示例商户', displayName: '示例商户' },
+        merchant: { id: 'merchant-1', companyName: '示例商户' },
       },
     };
 
@@ -110,7 +110,7 @@ describe('推广端任务只下发展示字段', () => {
 
       const merchantSelect = (taskSelect as { merchant?: { select?: Record<string, unknown> } })
         .merchant?.select;
-      expect(merchantSelect).toEqual({ id: true, companyName: true, displayName: true });
+      expect(merchantSelect).toEqual({ id: true, companyName: true });
 
       // 整串查询参数里不能出现商户内部字段名。
       const serialized = toJson(callArgs);
