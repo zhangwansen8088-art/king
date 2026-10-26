@@ -1,11 +1,15 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
 import {
   Equals,
   IsOptional,
   IsString,
+  IsInt,
   IsUrl,
   Matches,
+  Max,
   MaxLength,
+  Min,
   MinLength,
 } from 'class-validator';
 
@@ -38,6 +42,21 @@ export class SubmitProofDto {
 }
 
 export class ExposureQueryDto {
+  @ApiPropertyOptional({ minimum: 1, default: 1 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page?: number = 1;
+
+  @ApiPropertyOptional({ minimum: 1, maximum: 100, default: 20 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  pageSize?: number = 20;
+
   @ApiPropertyOptional({ example: '2026-10-01' })
   @IsOptional()
   @Matches(/^\d{4}-\d{2}-\d{2}$/)

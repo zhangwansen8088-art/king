@@ -20,6 +20,9 @@ export interface ExposurePage {
 export interface PromoterExposureResponse {
   items: ExposureDailyView[];
   totals: ExposureDailyTotals;
+  total: number;
+  page: number;
+  pageSize: number;
 }
 
 export type {

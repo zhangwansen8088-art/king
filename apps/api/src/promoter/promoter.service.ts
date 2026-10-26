@@ -112,14 +112,20 @@ export class PromoterService {
     assertStatDate(from);
     assertStatDate(to);
     if (from > to) throw new BadRequestException('统计日期范围无效');
-    const items = await this.prisma.exposureDaily.findMany({
+    const allItems = await this.prisma.exposureDaily.findMany({
       where: { promoterId: userId, statDate: { gte: from, lte: to } },
       include: { task: { select: { title: true } } },
       orderBy: [{ statDate: 'asc' }, { createdAt: 'asc' }],
     });
+    const page = query.page ?? 1;
+    const pageSize = query.pageSize ?? 20;
+    const items = allItems.slice((page - 1) * pageSize, page * pageSize);
     return {
       items: items.map(({ task, ...item }) => ({ ...item, taskTitle: task.title })),
-      totals: items.reduce(
+      page,
+      pageSize,
+      total: allItems.length,
+      totals: allItems.reduce(
         (totals, item) => ({
           exposureCount: totals.exposureCount + item.exposureCount,
           clickCount: totals.clickCount + item.clickCount,
