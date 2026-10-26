@@ -1,6 +1,8 @@
 import type {
   AuthSessionRecord,
   AuthSession,
+  ExposureDailyTotals,
+  ExposureDailyView,
   LedgerView,
   SessionUser,
   SubmissionStatus,
@@ -8,9 +10,23 @@ import type {
   WithdrawalStatus,
 } from '@max-promotion/contracts';
 
+export interface ExposurePage {
+  items: ExposureDailyView[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export interface PromoterExposureResponse {
+  items: ExposureDailyView[];
+  totals: ExposureDailyTotals;
+}
+
 export type {
   AuthSessionRecord,
   AuthSession,
+  ExposureDailyTotals,
+  ExposureDailyView,
   LedgerView,
   SessionUser,
   SubmissionStatus,

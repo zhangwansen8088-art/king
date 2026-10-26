@@ -14,6 +14,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import type {
   AdjustWalletDto,
   AuditLogQueryDto,
+  CreateExposureDailyDto,
+  ExposureDailyQueryDto,
   CreateMerchantDto,
   CreateTaskDto,
   MerchantExportQueryDto,
@@ -26,6 +28,19 @@ import type {
   WalletQueryDto,
   WithdrawalQueryDto,
 } from './admin.dto';
+
+function assertStatDate(value: string): void {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) throw new BadRequestException('统计日期必须是有效的 YYYY-MM-DD');
+  const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+  if (
+    date.getUTCFullYear() !== Number(match[1]) ||
+    date.getUTCMonth() !== Number(match[2]) - 1 ||
+    date.getUTCDate() !== Number(match[3])
+  ) {
+    throw new BadRequestException('统计日期必须是有效的 YYYY-MM-DD');
+  }
+}
 
 function toCsvCell(value: string | number | bigint | null | undefined): string {
   let text = value == null ? '' : String(value).replace(/\r\n?/g, '\n');
@@ -42,6 +57,99 @@ export class AdminService {
     private readonly prisma: PrismaService,
     private readonly funds: FundsService,
   ) {}
+
+  async createExposures(adminId: string, body: CreateExposureDailyDto) {
+    if (!body.items.length) throw new BadRequestException('至少需要导入一条曝光数据');
+    for (const item of body.items) assertStatDate(item.statDate);
+
+    const items = [];
+    for (const item of body.items) {
+      const [task, promoter] = await Promise.all([
+        this.prisma.task.findUnique({ where: { id: item.taskId } }),
+        this.prisma.user.findUnique({ where: { id: item.promoterId } }),
+      ]);
+      if (!task) throw new BadRequestException('任务不存在');
+      if (!promoter || promoter.role !== 'PROMOTER') {
+        throw new BadRequestException('推广人不存在或角色无效');
+      }
+      const exposure = await this.prisma.exposureDaily.upsert({
+        where: {
+          taskId_promoterId_statDate: {
+            taskId: item.taskId,
+            promoterId: item.promoterId,
+            statDate: item.statDate,
+          },
+        },
+        create: {
+          taskId: item.taskId,
+          promoterId: item.promoterId,
+          statDate: item.statDate,
+          exposureCount: item.exposureCount,
+          clickCount: item.clickCount,
+          conversionCount: item.conversionCount,
+          note: item.note?.trim() ?? '',
+        },
+        update: {
+          exposureCount: item.exposureCount,
+          clickCount: item.clickCount,
+          conversionCount: item.conversionCount,
+          note: item.note?.trim() ?? '',
+        },
+        include: { task: { select: { title: true } } },
+      });
+      items.push(exposure);
+    }
+    await this.prisma.auditLog.create({
+      data: {
+        actorId: adminId,
+        action: 'EXPOSURE_IMPORT',
+        entityType: 'EXPOSURE_DAILY',
+        entityId: items[0]?.id ?? '',
+        detail: `导入 ${items.length} 条曝光统计`,
+      },
+    });
+    return {
+      items: items.map(({ task, ...item }) => ({ ...item, taskTitle: task.title })),
+    };
+  }
+
+  async exposures(query: ExposureDailyQueryDto) {
+    if (query.from) assertStatDate(query.from);
+    if (query.to) assertStatDate(query.to);
+    if (query.from && query.to && query.from > query.to) {
+      throw new BadRequestException('统计日期范围无效');
+    }
+    const where = {
+      ...(query.taskId ? { taskId: query.taskId } : {}),
+      ...(query.promoterId ? { promoterId: query.promoterId } : {}),
+      ...(query.from || query.to
+        ? {
+            statDate: {
+              ...(query.from ? { gte: query.from } : {}),
+              ...(query.to ? { lte: query.to } : {}),
+            },
+          }
+        : {}),
+    };
+    const page = query.page ?? 1;
+    const pageSize = query.pageSize ?? 20;
+    const [total, items] = await Promise.all([
+      this.prisma.exposureDaily.count({ where }),
+      this.prisma.exposureDaily.findMany({
+        where,
+        include: { task: { select: { title: true } } },
+        orderBy: [{ statDate: 'asc' }, { createdAt: 'asc' }],
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+    ]);
+    return {
+      items: items.map(({ task, ...item }) => ({ ...item, taskTitle: task.title })),
+      page,
+      pageSize,
+      total,
+    };
+  }
 
   async dashboard() {
     const [

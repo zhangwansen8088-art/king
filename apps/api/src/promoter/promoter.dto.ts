@@ -37,6 +37,18 @@ export class SubmitProofDto {
   authenticityConfirmed!: boolean;
 }
 
+export class ExposureQueryDto {
+  @ApiPropertyOptional({ example: '2026-10-01' })
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/)
+  from?: string;
+
+  @ApiPropertyOptional({ example: '2026-10-31' })
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/)
+  to?: string;
+}
+
 export class CreateWithdrawalDto {
   @ApiProperty({ description: '提现金额，字符串整数分', example: '50000' })
   @Matches(/^\d+$/, { message: '提现金额必须是整数分' })

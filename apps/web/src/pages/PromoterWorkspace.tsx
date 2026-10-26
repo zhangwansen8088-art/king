@@ -1,6 +1,12 @@
 import { useState, type FormEvent } from 'react';
 import { api } from '../api';
-import type { LedgerView, PromoterDashboard, SessionUser, Submission } from '../types';
+import type {
+  LedgerView,
+  PromoterDashboard,
+  PromoterExposureResponse,
+  SessionUser,
+  Submission,
+} from '../types';
 import {
   EmptyState,
   Field,
@@ -35,6 +41,7 @@ const ledgerNames: Record<string, string> = {
 
 export function PromoterWorkspace({ user, onLogout }: PromoterWorkspaceProps) {
   const [dashboard, setDashboard] = useState<PromoterDashboard | null>(null);
+  const [exposure, setExposure] = useState<PromoterExposureResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [claiming, setClaiming] = useState(false);
   const [submittingProof, setSubmittingProof] = useState(false);
@@ -47,7 +54,12 @@ export function PromoterWorkspace({ user, onLogout }: PromoterWorkspaceProps) {
   async function load(quiet = false) {
     if (!quiet) setLoading(true);
     try {
-      setDashboard(await api.get<PromoterDashboard>('/promoter/dashboard'));
+      const [nextDashboard, nextExposure] = await Promise.all([
+        api.get<PromoterDashboard>('/promoter/dashboard'),
+        api.get<PromoterExposureResponse>('/promoter/exposures'),
+      ]);
+      setDashboard(nextDashboard);
+      setExposure(nextExposure);
     } catch (caught) {
       setNotice({ kind: 'error', text: errorMessage(caught) });
     } finally {
@@ -355,6 +367,39 @@ export function PromoterWorkspace({ user, onLogout }: PromoterWorkspaceProps) {
                 </button>
                 <small>申请不扣余额，管理员确认打款后才扣款。</small>
               </aside>
+            </section>
+
+            <section className="workspace-card" aria-labelledby="exposure-title">
+              <div className="section-heading">
+                <div>
+                  <span className="section-kicker">数据回顾</span>
+                  <h2 id="exposure-title">我的曝光</h2>
+                </div>
+                <div className="quota-rule">
+                  <span>曝光 {exposure?.totals.exposureCount ?? 0}</span>
+                  <span>点击 {exposure?.totals.clickCount ?? 0}</span>
+                  <span>转化 {exposure?.totals.conversionCount ?? 0}</span>
+                </div>
+              </div>
+              {exposure?.items.length ? (
+                <div className="simple-table">
+                  {exposure.items.map((item) => (
+                    <div className="simple-table-row" key={item.id}>
+                      <span>
+                        {item.statDate} · {item.taskTitle}
+                      </span>
+                      <strong>
+                        {item.exposureCount} / {item.clickCount} / {item.conversionCount}
+                      </strong>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <EmptyState
+                  title="暂无曝光数据"
+                  detail="管理员导入后，这里会显示最近 30 天数据。"
+                />
+              )}
             </section>
 
             <LedgerSection ledger={dashboard.ledger} />

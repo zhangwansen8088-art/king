@@ -6,6 +6,7 @@ import type {
   AdminWallet,
   AdminWalletPage,
   AuditLogPage,
+  ExposurePage,
   MerchantPage,
   MerchantSummary,
   SessionUser,
@@ -36,7 +37,14 @@ import {
 import { SessionSecurityPanel } from '../components/SessionSecurity';
 
 type AdminSection =
-  'overview' | 'merchants' | 'tasks' | 'reviews' | 'withdrawals' | 'audit' | 'security';
+  | 'overview'
+  | 'merchants'
+  | 'tasks'
+  | 'reviews'
+  | 'withdrawals'
+  | 'exposures'
+  | 'audit'
+  | 'security';
 
 interface AdminWorkspaceProps {
   user: SessionUser;
@@ -49,6 +57,7 @@ const navItems: Array<{ id: AdminSection; label: string; index: string }> = [
   { id: 'tasks', label: '任务管理', index: '任' },
   { id: 'reviews', label: '凭证审核', index: '审' },
   { id: 'withdrawals', label: '提现处理', index: '提' },
+  { id: 'exposures', label: '曝光数据', index: '曝' },
   { id: 'audit', label: '审计日志', index: '记' },
   { id: 'security', label: '会话安全', index: '安' },
 ];
@@ -282,6 +291,8 @@ export function AdminWorkspace({ user, onLogout }: AdminWorkspaceProps) {
               onError={showError}
               onReview={setWithdrawalTarget}
             />
+          ) : section === 'exposures' ? (
+            <ExposureSection onError={showError} />
           ) : section === 'security' ? (
             <SessionSecurityPanel onNotice={setNotice} />
           ) : (
@@ -380,6 +391,129 @@ function SectionHeading({
         <p>{children}</p>
       </div>
       {action}
+    </div>
+  );
+}
+
+function ExposureSection({ onError }: { onError: (message: string) => void }) {
+  const [page, setPage] = useState<ExposurePage | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [taskId, setTaskId] = useState('');
+  const [promoterId, setPromoterId] = useState('');
+  const [statDate, setStatDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [exposureCount, setExposureCount] = useState('0');
+  const [clickCount, setClickCount] = useState('0');
+  const [conversionCount, setConversionCount] = useState('0');
+
+  const load = async () => {
+    try {
+      setPage(await api.get<ExposurePage>('/admin/exposures?page=1&pageSize=100'));
+    } catch (caught) {
+      onError(errorMessage(caught));
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => {
+    void load();
+  }, []);
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    try {
+      await api.post('/admin/exposures', {
+        items: [
+          {
+            taskId,
+            promoterId,
+            statDate,
+            exposureCount: Number(exposureCount),
+            clickCount: Number(clickCount),
+            conversionCount: Number(conversionCount),
+          },
+        ],
+      });
+      await load();
+    } catch (caught) {
+      onError(errorMessage(caught));
+    }
+  }
+
+  return (
+    <div className="section-stack">
+      <section className="workspace-card">
+        <div className="section-heading">
+          <div>
+            <span className="section-kicker">人工导入</span>
+            <h2>曝光数据</h2>
+          </div>
+        </div>
+        <form className="form-grid" onSubmit={submit}>
+          <Field label="任务 ID">
+            <input value={taskId} onChange={(event) => setTaskId(event.target.value)} required />
+          </Field>
+          <Field label="推广人 ID">
+            <input
+              value={promoterId}
+              onChange={(event) => setPromoterId(event.target.value)}
+              required
+            />
+          </Field>
+          <Field label="日期">
+            <input
+              type="date"
+              value={statDate}
+              onChange={(event) => setStatDate(event.target.value)}
+              required
+            />
+          </Field>
+          <Field label="曝光">
+            <input
+              type="number"
+              min="0"
+              value={exposureCount}
+              onChange={(event) => setExposureCount(event.target.value)}
+            />
+          </Field>
+          <Field label="点击">
+            <input
+              type="number"
+              min="0"
+              value={clickCount}
+              onChange={(event) => setClickCount(event.target.value)}
+            />
+          </Field>
+          <Field label="转化">
+            <input
+              type="number"
+              min="0"
+              value={conversionCount}
+              onChange={(event) => setConversionCount(event.target.value)}
+            />
+          </Field>
+          <button className="primary-button" type="submit">
+            保存覆盖
+          </button>
+        </form>
+      </section>
+      <section className="workspace-card">
+        {loading ? (
+          <LoadingBlock />
+        ) : page?.items.length ? (
+          page.items.map((item) => (
+            <div className="simple-table-row" key={item.id}>
+              <span>
+                {item.statDate} · {item.taskTitle} · {item.promoterId}
+              </span>
+              <strong>
+                {item.exposureCount} / {item.clickCount} / {item.conversionCount}
+              </strong>
+            </div>
+          ))
+        ) : (
+          <EmptyState title="暂无曝光数据" detail="录入后会显示在这里。" />
+        )}
+      </section>
     </div>
   );
 }

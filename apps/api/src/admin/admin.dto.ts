@@ -2,6 +2,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
   IsIn,
+  IsArray,
   IsBoolean,
   IsISO8601,
   IsInt,
@@ -13,9 +14,90 @@ import {
   MaxLength,
   Min,
   MinLength,
+  ValidateNested,
 } from 'class-validator';
 
 const money = { message: '金额必须是字符串形式的整数分' };
+
+export class ExposureDailyItemDto {
+  @ApiProperty()
+  @IsUUID()
+  taskId!: string;
+
+  @ApiProperty()
+  @IsUUID()
+  promoterId!: string;
+
+  @ApiProperty({ example: '2026-10-26' })
+  @Matches(/^\d{4}-\d{2}-\d{2}$/)
+  statDate!: string;
+
+  @ApiProperty({ minimum: 0 })
+  @IsInt()
+  @Min(0)
+  exposureCount!: number;
+
+  @ApiProperty({ minimum: 0 })
+  @IsInt()
+  @Min(0)
+  clickCount!: number;
+
+  @ApiProperty({ minimum: 0 })
+  @IsInt()
+  @Min(0)
+  conversionCount!: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  note?: string;
+}
+
+export class CreateExposureDailyDto {
+  @ApiProperty({ type: [ExposureDailyItemDto] })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ExposureDailyItemDto)
+  items!: ExposureDailyItemDto[];
+}
+
+export class ExposureDailyQueryDto {
+  @ApiPropertyOptional({ minimum: 1, default: 1 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page?: number = 1;
+
+  @ApiPropertyOptional({ minimum: 1, maximum: 100, default: 20 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  pageSize?: number = 20;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsUUID()
+  taskId?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsUUID()
+  promoterId?: string;
+
+  @ApiPropertyOptional({ example: '2026-10-01' })
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/)
+  from?: string;
+
+  @ApiPropertyOptional({ example: '2026-10-31' })
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/)
+  to?: string;
+}
 
 export class AuditLogQueryDto {
   @ApiPropertyOptional({ default: 1, minimum: 1 })

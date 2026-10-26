@@ -7,7 +7,32 @@ import {
 } from '../business/business-rules';
 import { FundsService } from '../business/funds.service';
 import { PrismaService } from '../prisma/prisma.service';
-import type { SubmitProofDto, CreateWithdrawalDto } from './promoter.dto';
+import type { ExposureQueryDto, SubmitProofDto, CreateWithdrawalDto } from './promoter.dto';
+
+function assertStatDate(value: string): void {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) throw new BadRequestException('统计日期必须是有效的 YYYY-MM-DD');
+  const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+  if (
+    date.getUTCFullYear() !== Number(match[1]) ||
+    date.getUTCMonth() !== Number(match[2]) - 1 ||
+    date.getUTCDate() !== Number(match[3])
+  ) {
+    throw new BadRequestException('统计日期必须是有效的 YYYY-MM-DD');
+  }
+}
+
+function shanghaiDateDaysAgo(days: number): string {
+  const today = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+  const date = new Date(`${today}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() - days);
+  return date.toISOString().slice(0, 10);
+}
 
 // 只接受公网 http/https 地址，拦截内网、本机地址和带账号密码的链接。
 function isPublicHttpUrl(value: string): boolean {
@@ -80,6 +105,30 @@ export class PromoterService {
     private readonly prisma: PrismaService,
     private readonly funds: FundsService,
   ) {}
+
+  async exposures(userId: string, query: ExposureQueryDto) {
+    const from = query.from ?? shanghaiDateDaysAgo(29);
+    const to = query.to ?? shanghaiDateDaysAgo(0);
+    assertStatDate(from);
+    assertStatDate(to);
+    if (from > to) throw new BadRequestException('统计日期范围无效');
+    const items = await this.prisma.exposureDaily.findMany({
+      where: { promoterId: userId, statDate: { gte: from, lte: to } },
+      include: { task: { select: { title: true } } },
+      orderBy: [{ statDate: 'asc' }, { createdAt: 'asc' }],
+    });
+    return {
+      items: items.map(({ task, ...item }) => ({ ...item, taskTitle: task.title })),
+      totals: items.reduce(
+        (totals, item) => ({
+          exposureCount: totals.exposureCount + item.exposureCount,
+          clickCount: totals.clickCount + item.clickCount,
+          conversionCount: totals.conversionCount + item.conversionCount,
+        }),
+        { exposureCount: 0, clickCount: 0, conversionCount: 0 },
+      ),
+    };
+  }
 
   async dashboard(userId: string) {
     const { start, end } = shanghaiDayBounds();

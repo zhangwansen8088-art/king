@@ -80,6 +80,7 @@ model User {
   withdrawals     Withdrawal[]       @relation("PromoterWithdrawals")
   reviewedWithdrawals Withdrawal[]   @relation("WithdrawalReviewer")
   auditLogs       AuditLog[]         @relation("AuditActor")
+  exposureDaily   ExposureDaily[]    @relation("ExposurePromoter")
   createdAt       DateTime           @default(now())
   updatedAt       DateTime           @updatedAt
 }
@@ -135,6 +136,7 @@ model Task {
   endsAt              DateTime
   createdByAdminId    String?      @db.Uuid
   submissions         Submission[]
+  exposureDaily       ExposureDaily[]
   createdAt           DateTime     @default(now())
   updatedAt           DateTime     @updatedAt
   version             Int          @default(0)
@@ -238,6 +240,25 @@ model LedgerEntry {
 
   @@index([walletId, createdAt])
   @@index([referenceType, referenceId])
+}
+
+model ExposureDaily {
+  id                String   @id @default(uuid()) @db.Uuid
+  taskId            String   @db.Uuid
+  task              Task     @relation(fields: [taskId], references: [id])
+  promoterId        String   @db.Uuid
+  promoter          User     @relation("ExposurePromoter", fields: [promoterId], references: [id])
+  statDate          String   @db.VarChar(10)
+  exposureCount     Int
+  clickCount        Int
+  conversionCount   Int
+  note              String   @default("")
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([taskId, promoterId, statDate])
+  @@index([promoterId, statDate])
+  @@index([taskId, statDate])
 }
 
 model AuditLog {
