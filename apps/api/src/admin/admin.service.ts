@@ -515,17 +515,19 @@ export class AdminService {
         },
       });
       if (body.decision === 'REJECTED') {
-        await this.funds.change(tx, {
-          userId: submission.promoterId,
-          availableDelta: submission.depositCents,
-          frozenDelta: -submission.depositCents,
-          type: 'GUARANTEE_REFUND',
-          referenceType: 'SUBMISSION',
-          referenceId: submission.id,
-          idempotencyKey: `submission:${submission.id}:guarantee:refund:rejected`,
-          memo: '推广凭证被驳回，本单保证金原额退回',
-          actorId: adminId,
-        });
+        if (submission.depositCents > 0n) {
+          await this.funds.change(tx, {
+            userId: submission.promoterId,
+            availableDelta: submission.depositCents,
+            frozenDelta: -submission.depositCents,
+            type: 'GUARANTEE_REFUND',
+            referenceType: 'SUBMISSION',
+            referenceId: submission.id,
+            idempotencyKey: `submission:${submission.id}:guarantee:refund:rejected`,
+            memo: '推广凭证被驳回，本单保证金原额退回',
+            actorId: adminId,
+          });
+        }
       } else {
         const parent = submission.promoter.parent;
         const referralCents =
@@ -548,17 +550,19 @@ export class AdminService {
           memo: '推广审核通过，结算本单佣金和直系上级返佣',
           actorId: adminId,
         });
-        await this.funds.change(tx, {
-          userId: submission.promoterId,
-          availableDelta: submission.depositCents,
-          frozenDelta: -submission.depositCents,
-          type: 'GUARANTEE_REFUND',
-          referenceType: 'SUBMISSION',
-          referenceId: submission.id,
-          idempotencyKey: `submission:${submission.id}:guarantee:refund:approved`,
-          memo: '推广审核通过，本单保证金原额退回',
-          actorId: adminId,
-        });
+        if (submission.depositCents > 0n) {
+          await this.funds.change(tx, {
+            userId: submission.promoterId,
+            availableDelta: submission.depositCents,
+            frozenDelta: -submission.depositCents,
+            type: 'GUARANTEE_REFUND',
+            referenceType: 'SUBMISSION',
+            referenceId: submission.id,
+            idempotencyKey: `submission:${submission.id}:guarantee:refund:approved`,
+            memo: '推广审核通过，本单保证金原额退回',
+            actorId: adminId,
+          });
+        }
         await this.funds.change(tx, {
           userId: submission.promoterId,
           availableDelta: submission.task.commissionCents,

@@ -433,13 +433,61 @@ describe('PostgreSQL 资金与任务业务闭环', () => {
 
     expect(submission.taskId).toBe(task.id);
     expect(submission.depositCents).toBe(0n);
+    await promoter.submitProof(actors.child.id, submission.id, {
+      proofText: '零余额福利任务凭证',
+      proofUrl: 'https://example.com/welfare-zero-proof',
+      authenticityConfirmed: true,
+    });
+    await admin.reviewSubmission(actors.adminUser.id, submission.id, {
+      decision: 'APPROVED',
+      note: '零保证金福利任务审核通过',
+      verificationBasis: '2026-10-25 14:20 测试确认，回执号 WELFARE-ZERO-01',
+      counterpartyConfirmed: true,
+    });
+    expect(
+      await prisma.wallet.findUniqueOrThrow({ where: { userId: actors.child.id } }),
+    ).toMatchObject({
+      availableCents: 5_000n,
+      frozenCents: 0n,
+    });
+    expect(await prisma.ledgerEntry.count({ where: { type: 'GUARANTEE_FREEZE' } })).toBe(0);
+    expect(await prisma.ledgerEntry.count({ where: { type: 'GUARANTEE_REFUND' } })).toBe(0);
+  });
+
+  it('零保证金福利任务驳回不产生退款流水', async () => {
+    const actors = await seedBusinessActors();
+    await prisma.wallet.update({
+      where: { userId: actors.child.id },
+      data: { availableCents: 0n },
+    });
+    const task = await admin.createTask(
+      actors.adminUser.id,
+      taskDraft(actors.merchantId, {
+        rewardType: 'WELFARE',
+        welfareClaimRule: '上海地区用户，线上领取，每人限领 1 份',
+        maxClaims: 1,
+      }),
+    );
+    const submission = await promoter.claimRandom(actors.child.id);
+    expect(submission.taskId).toBe(task.id);
+    await promoter.submitProof(actors.child.id, submission.id, {
+      proofText: '零余额福利任务驳回凭证',
+      proofUrl: 'https://example.com/welfare-zero-rejected',
+      authenticityConfirmed: true,
+    });
+    await admin.reviewSubmission(actors.adminUser.id, submission.id, {
+      decision: 'REJECTED',
+      note: '零保证金福利任务驳回',
+      verificationBasis: '2026-10-25 14:25 测试确认，回执号 WELFARE-ZERO-02',
+      counterpartyConfirmed: true,
+    });
+    expect(await prisma.ledgerEntry.count({ where: { type: 'GUARANTEE_REFUND' } })).toBe(0);
     expect(
       await prisma.wallet.findUniqueOrThrow({ where: { userId: actors.child.id } }),
     ).toMatchObject({
       availableCents: 0n,
       frozenCents: 0n,
     });
-    expect(await prisma.ledgerEntry.count({ where: { type: 'GUARANTEE_FREEZE' } })).toBe(0);
   });
 
   it('普通任务余额不足时仍按原规则拒绝领取', async () => {
