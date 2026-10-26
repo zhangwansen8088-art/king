@@ -266,8 +266,8 @@ export function PromoterWorkspace({ user, onLogout }: PromoterWorkspaceProps) {
                     <span className="section-kicker">下一步</span>
                     <h2 id="dispatch-title">随机领取一单</h2>
                     <p>
-                      系统从当前进行中的普通任务里随机分配，领取时会冻结可用余额的 70%–74%
-                      作为本单保证金。
+                      系统从当前进行中的任务里随机分配；普通任务冻结可用余额
+                      70%–74%，福利任务按该任务广告费冻结，余额不足时冻结现有可用余额。
                     </p>
                     <button
                       className="primary-button dispatch-button"
