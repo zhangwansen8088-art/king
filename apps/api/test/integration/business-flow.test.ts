@@ -368,6 +368,66 @@ describe('PostgreSQL 资金与任务业务闭环', () => {
     expect(wallet).toMatchObject({ availableCents: 60_000n, frozenCents: 140_000n });
   });
 
+  it('福利任务进入随机池并完成领取、提交、审核闭环', async () => {
+    const actors = await seedBusinessActors();
+    const task = await admin.createTask(
+      actors.adminUser.id,
+      taskDraft(actors.merchantId, {
+        rewardType: 'WELFARE',
+        welfareClaimRule: '上海地区用户，线上领取，每人限领 1 份',
+        maxClaims: 1,
+      }),
+    );
+
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0);
+    const submission = await promoter.claimRandom(actors.child.id);
+    random.mockRestore();
+
+    expect(submission.taskId).toBe(task.id);
+    expect(submission.status).toBe('CLAIMED');
+    expect(submission.depositCents).toBe(140_000n);
+    await promoter.submitProof(actors.child.id, submission.id, {
+      proofText: '福利任务已完成展示并上传凭证',
+      proofUrl: 'https://example.com/welfare-proof',
+      authenticityConfirmed: true,
+    });
+    const reviewed = await admin.reviewSubmission(actors.adminUser.id, submission.id, {
+      decision: 'APPROVED',
+      note: '福利任务集成测试审核通过',
+      verificationBasis: '2026-10-25 14:10 测试联系人确认，回执号 WELFARE-01',
+      counterpartyConfirmed: true,
+    });
+
+    expect(reviewed.status).toBe('APPROVED');
+    expect(await prisma.submission.count({ where: { taskId: task.id } })).toBe(1);
+  });
+
+  it('多笔待审提现占用可用余额，驳回后可再次申请', async () => {
+    const actors = await seedBusinessActors();
+    await grantApprovedClaims(actors.child.id, actors.merchantId, 120);
+
+    const first = await promoter.requestWithdrawal(actors.child.id, {
+      amountCents: '150000',
+      payoutAccount: '支付宝：待审占用测试收款人',
+    });
+    await expect(
+      promoter.requestWithdrawal(actors.child.id, {
+        amountCents: '100000',
+        payoutAccount: '支付宝：待审占用测试收款人',
+      }),
+    ).rejects.toThrow('可用余额不足（含待审核提现占用）');
+
+    await admin.reviewWithdrawal(actors.adminUser.id, first.id, {
+      decision: 'REJECTED',
+      note: '释放待审核提现占用',
+    });
+    const second = await promoter.requestWithdrawal(actors.child.id, {
+      amountCents: '100000',
+      payoutAccount: '支付宝：待审占用测试收款人',
+    });
+    expect(second.status).toBe('PENDING');
+  });
+
   it('多个推广客户并发领取单名额任务时不能超卖', async () => {
     const actors = await seedBusinessActors();
     const otherPromoters = await Promise.all(

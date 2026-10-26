@@ -143,7 +143,7 @@ export class PromoterService {
         const candidates = await tx.task.findMany({
           where: {
             status: 'OPEN',
-            rewardType: 'NORMAL',
+            rewardType: { in: ['NORMAL', 'WELFARE'] },
             startsAt: { lte: now },
             endsAt: { gte: now },
             submissions: { none: { promoterId: userId } },
@@ -250,9 +250,16 @@ export class PromoterService {
       if (status.remainingQuota <= 0) {
         throw new BadRequestException('提现次数不足，每审核通过 60 单增加一次');
       }
-      const wallet = await tx.wallet.findUnique({ where: { userId } });
-      if (!wallet || wallet.availableCents < amount) {
-        throw new BadRequestException('可用余额不足');
+      const [wallet, pendingWithdrawals] = await Promise.all([
+        tx.wallet.findUnique({ where: { userId } }),
+        tx.withdrawal.aggregate({
+          where: { userId, status: 'PENDING' },
+          _sum: { amountCents: true },
+        }),
+      ]);
+      const pendingAmount = pendingWithdrawals._sum.amountCents ?? 0n;
+      if (!wallet || wallet.availableCents - pendingAmount < amount) {
+        throw new BadRequestException('可用余额不足（含待审核提现占用）');
       }
       const withdrawal = await tx.withdrawal.create({
         data: {
