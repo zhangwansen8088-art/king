@@ -368,6 +368,71 @@ describe('PostgreSQL 资金与任务业务闭环', () => {
     expect(wallet).toMatchObject({ availableCents: 60_000n, frozenCents: 140_000n });
   });
 
+  it('人工曝光导入按任务和推广人隔离，并按日期覆盖', async () => {
+    const actors = await seedBusinessActors();
+    const otherPromoter = await createUser({
+      username: 'exposure-other-promoter',
+      displayName: '曝光隔离推广人',
+      role: 'PROMOTER',
+      availableCents: 100_000n,
+    });
+    const task = await admin.createTask(actors.adminUser.id, taskDraft(actors.merchantId));
+
+    await admin.createExposures(actors.adminUser.id, {
+      items: [
+        {
+          taskId: task.id,
+          promoterId: actors.child.id,
+          statDate: '2026-10-26',
+          exposureCount: 10,
+          clickCount: 3,
+          conversionCount: 1,
+          note: '人工导入',
+        },
+      ],
+    });
+    await admin.createExposures(actors.adminUser.id, {
+      items: [
+        {
+          taskId: task.id,
+          promoterId: actors.child.id,
+          statDate: '2026-10-26',
+          exposureCount: 20,
+          clickCount: 4,
+          conversionCount: 2,
+        },
+      ],
+    });
+
+    const page = await admin.exposures({ taskId: task.id, page: 1, pageSize: 20 });
+    expect(page.total).toBe(1);
+    expect(page.items[0]).toMatchObject({ exposureCount: 20, clickCount: 4, conversionCount: 2 });
+    const mine = await promoter.exposures(actors.child.id, {
+      from: '2026-10-01',
+      to: '2026-10-31',
+    });
+    expect(mine.totals).toEqual({ exposureCount: 20, clickCount: 4, conversionCount: 2 });
+    const other = await promoter.exposures(otherPromoter.id, {
+      from: '2026-10-01',
+      to: '2026-10-31',
+    });
+    expect(other.items).toHaveLength(0);
+    await expect(
+      admin.createExposures(actors.adminUser.id, {
+        items: [
+          {
+            taskId: task.id,
+            promoterId: actors.child.id,
+            statDate: '2026-02-30',
+            exposureCount: 1,
+            clickCount: 0,
+            conversionCount: 0,
+          },
+        ],
+      }),
+    ).rejects.toThrow('统计日期必须是有效的 YYYY-MM-DD');
+  });
+
   it('福利任务进入随机池并完成领取、提交、审核闭环', async () => {
     const actors = await seedBusinessActors();
     const task = await admin.createTask(

@@ -16,6 +16,8 @@ import { CurrentUser, Roles } from '../common/decorators';
 import {
   AdjustWalletDto,
   AuditLogQueryDto,
+  CreateExposureDailyDto,
+  ExposureDailyQueryDto,
   CreateMerchantDto,
   CreateTaskDto,
   MerchantExportQueryDto,
@@ -41,6 +43,16 @@ export class AdminController {
   @Get('dashboard')
   dashboard() {
     return this.admin.dashboard();
+  }
+
+  @Post('exposures')
+  createExposures(@CurrentUser() user: AuthUser, @Body() body: CreateExposureDailyDto) {
+    return this.admin.createExposures(user.id, body);
+  }
+
+  @Get('exposures')
+  exposures(@Query() query: ExposureDailyQueryDto) {
+    return this.admin.exposures(query);
   }
 
   @Get('merchants')

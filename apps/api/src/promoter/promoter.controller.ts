@@ -1,9 +1,9 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { CurrentUser, Roles } from '../common/decorators';
 import type { AuthUser } from '../common/auth.types';
 import { PromoterService } from './promoter.service';
-import { CreateWithdrawalDto, SubmitProofDto } from './promoter.dto';
+import { CreateWithdrawalDto, ExposureQueryDto, SubmitProofDto } from './promoter.dto';
 
 @ApiBearerAuth()
 @ApiTags('推广客户')
@@ -15,6 +15,11 @@ export class PromoterController {
   @Get('dashboard')
   dashboard(@CurrentUser() user: AuthUser) {
     return this.promoter.dashboard(user.id);
+  }
+
+  @Get('exposures')
+  exposures(@CurrentUser() user: AuthUser, @Query() query: ExposureQueryDto) {
+    return this.promoter.exposures(user.id, query);
   }
 
   @Post('claims')

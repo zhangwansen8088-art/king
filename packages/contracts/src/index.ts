@@ -78,6 +78,25 @@ export interface TaskView {
   };
 }
 
+export interface ExposureDailyView {
+  id: string;
+  taskId: string;
+  promoterId: string;
+  statDate: string;
+  exposureCount: number;
+  clickCount: number;
+  conversionCount: number;
+  note: string;
+  taskTitle: string;
+  createdAt: string;
+}
+
+export interface ExposureDailyTotals {
+  exposureCount: number;
+  clickCount: number;
+  conversionCount: number;
+}
+
 export interface SubmissionView {
   id: string;
   status: SubmissionStatus;
