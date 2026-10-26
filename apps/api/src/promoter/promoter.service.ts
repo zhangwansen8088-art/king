@@ -112,27 +112,33 @@ export class PromoterService {
     assertStatDate(from);
     assertStatDate(to);
     if (from > to) throw new BadRequestException('统计日期范围无效');
-    const allItems = await this.prisma.exposureDaily.findMany({
-      where: { promoterId: userId, statDate: { gte: from, lte: to } },
-      include: { task: { select: { title: true } } },
-      orderBy: [{ statDate: 'asc' }, { createdAt: 'asc' }],
-    });
+    const where = { promoterId: userId, statDate: { gte: from, lte: to } };
     const page = query.page ?? 1;
     const pageSize = query.pageSize ?? 20;
-    const items = allItems.slice((page - 1) * pageSize, page * pageSize);
+    const [total, items, aggregate] = await Promise.all([
+      this.prisma.exposureDaily.count({ where }),
+      this.prisma.exposureDaily.findMany({
+        where,
+        include: { task: { select: { title: true } } },
+        orderBy: [{ statDate: 'asc' }, { createdAt: 'asc' }],
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+      this.prisma.exposureDaily.aggregate({
+        where,
+        _sum: { exposureCount: true, clickCount: true, conversionCount: true },
+      }),
+    ]);
     return {
       items: items.map(({ task, ...item }) => ({ ...item, taskTitle: task.title })),
       page,
       pageSize,
-      total: allItems.length,
-      totals: allItems.reduce(
-        (totals, item) => ({
-          exposureCount: totals.exposureCount + item.exposureCount,
-          clickCount: totals.clickCount + item.clickCount,
-          conversionCount: totals.conversionCount + item.conversionCount,
-        }),
-        { exposureCount: 0, clickCount: 0, conversionCount: 0 },
-      ),
+      total,
+      totals: {
+        exposureCount: aggregate._sum.exposureCount ?? 0,
+        clickCount: aggregate._sum.clickCount ?? 0,
+        conversionCount: aggregate._sum.conversionCount ?? 0,
+      },
     };
   }
 

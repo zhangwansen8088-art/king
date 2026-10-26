@@ -62,55 +62,57 @@ export class AdminService {
     if (!body.items.length) throw new BadRequestException('至少需要导入一条曝光数据');
     for (const item of body.items) assertStatDate(item.statDate);
 
-    const items = [];
-    for (const item of body.items) {
-      const [task, promoter] = await Promise.all([
-        this.prisma.task.findUnique({ where: { id: item.taskId } }),
-        this.prisma.user.findUnique({ where: { id: item.promoterId } }),
-      ]);
-      if (!task) throw new BadRequestException('任务不存在');
-      if (!promoter || promoter.role !== 'PROMOTER') {
-        throw new BadRequestException('推广人不存在或角色无效');
-      }
-      const exposure = await this.prisma.exposureDaily.upsert({
-        where: {
-          taskId_promoterId_statDate: {
+    return this.prisma.$transaction(async (tx) => {
+      const items = [];
+      for (const item of body.items) {
+        const [task, promoter] = await Promise.all([
+          tx.task.findUnique({ where: { id: item.taskId } }),
+          tx.user.findUnique({ where: { id: item.promoterId } }),
+        ]);
+        if (!task) throw new BadRequestException('任务不存在');
+        if (!promoter || promoter.role !== 'PROMOTER') {
+          throw new BadRequestException('推广人不存在或角色无效');
+        }
+        const exposure = await tx.exposureDaily.upsert({
+          where: {
+            taskId_promoterId_statDate: {
+              taskId: item.taskId,
+              promoterId: item.promoterId,
+              statDate: item.statDate,
+            },
+          },
+          create: {
             taskId: item.taskId,
             promoterId: item.promoterId,
             statDate: item.statDate,
+            exposureCount: item.exposureCount,
+            clickCount: item.clickCount,
+            conversionCount: item.conversionCount,
+            note: item.note?.trim() ?? '',
           },
+          update: {
+            exposureCount: item.exposureCount,
+            clickCount: item.clickCount,
+            conversionCount: item.conversionCount,
+            note: item.note?.trim() ?? '',
+          },
+          include: { task: { select: { title: true } } },
+        });
+        items.push(exposure);
+      }
+      await tx.auditLog.create({
+        data: {
+          actorId: adminId,
+          action: 'EXPOSURE_IMPORT',
+          entityType: 'EXPOSURE_DAILY',
+          entityId: items[0]?.id ?? '',
+          detail: `导入 ${items.length} 条曝光统计`,
         },
-        create: {
-          taskId: item.taskId,
-          promoterId: item.promoterId,
-          statDate: item.statDate,
-          exposureCount: item.exposureCount,
-          clickCount: item.clickCount,
-          conversionCount: item.conversionCount,
-          note: item.note?.trim() ?? '',
-        },
-        update: {
-          exposureCount: item.exposureCount,
-          clickCount: item.clickCount,
-          conversionCount: item.conversionCount,
-          note: item.note?.trim() ?? '',
-        },
-        include: { task: { select: { title: true } } },
       });
-      items.push(exposure);
-    }
-    await this.prisma.auditLog.create({
-      data: {
-        actorId: adminId,
-        action: 'EXPOSURE_IMPORT',
-        entityType: 'EXPOSURE_DAILY',
-        entityId: items[0]?.id ?? '',
-        detail: `导入 ${items.length} 条曝光统计`,
-      },
+      return {
+        items: items.map(({ task, ...item }) => ({ ...item, taskTitle: task.title })),
+      };
     });
-    return {
-      items: items.map(({ task, ...item }) => ({ ...item, taskTitle: task.title })),
-    };
   }
 
   async exposures(query: ExposureDailyQueryDto) {

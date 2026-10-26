@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
   IsIn,
   IsArray,
   IsBoolean,
@@ -57,6 +58,7 @@ export class ExposureDailyItemDto {
 export class CreateExposureDailyDto {
   @ApiProperty({ type: [ExposureDailyItemDto] })
   @IsArray()
+  @ArrayMaxSize(500)
   @ValidateNested({ each: true })
   @Type(() => ExposureDailyItemDto)
   items!: ExposureDailyItemDto[];
